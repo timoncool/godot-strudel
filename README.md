@@ -22,7 +22,7 @@ It exists because game music written in a bespoke data format cannot be heard ou
 ## Features
 
 - **Paste Strudel code unchanged** — `const`, arrow functions, `$:`, method chains, mini-notation strings all work as written
-- **Verified against the real thing** — 115 of 116 reference expressions and a full 2449-event track produce *bit-identical* events to live Strudel; see [docs/COMPARISON.md](docs/COMPARISON.md)
+- **Verified against the real thing** — all **32 community tunes** from Strudel's own collection, 143 of 144 reference expressions and a full 2449-event track produce *bit-identical* events to live Strudel; **213 of 213 functions and 499 of 499 controls** covered; see [docs/COMPARISON.md](docs/COMPARISON.md)
 - **Exact time** — positions are rational numbers, never floats, so beats do not drift on long forms
 - **Sample-accurate scheduling** — the clock is the audio frame counter, not `_process`, so frame drops never shift the beat
 - **Your own samples** — point it at a folder; reads Strudel-format sample maps (`strudel.json`, `vcsl.json`, multisampled instruments)
