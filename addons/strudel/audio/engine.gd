@@ -26,6 +26,8 @@ var max_voices := 64
 var mix_rate := 48000.0
 var pattern: StrudelPattern = null
 var bank: StrudelSampleBank = null
+## Саундфонт для голосов вида `sf:<банк>:<программа>`.
+var soundfont: StrudelSoundFont = null
 
 ## Сколько раз пришлось вытеснять голос — видно в отладке, а не «молча».
 var stolen_voices := 0
@@ -251,7 +253,7 @@ func _trigger(value: Variant, length: float, offset_in_buffer: int, count: int) 
 	var voice := _take_voice()
 	if voice == null:
 		return
-	StrudelVoiceBuilder.configure(voice, value, length, bank, mix_rate)
+	StrudelVoiceBuilder.configure(voice, value, length, bank, mix_rate, soundfont)
 	voice.start(mix_rate)
 	# Удар ставится на ТОЧНЫЙ отсчёт внутри буфера, а не на его границу:
 	# иначе доли дрожали бы на размер буфера — это слышно как неровный ритм.

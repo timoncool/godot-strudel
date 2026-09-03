@@ -29,7 +29,7 @@ const SYNTHS := {
 
 
 static func configure(voice: StrudelVoice, value: Dictionary, length: float,
-		bank: StrudelSampleBank, mix_rate: float) -> void:
+		bank: StrudelSampleBank, mix_rate: float, soundfont: StrudelSoundFont = null) -> void:
 	var note_midi := _midi_of(value)
 	voice.frequency = StrudelUtil.midi_to_freq(note_midi)
 	# Умолчание громкости в Strudel — 0.8, а не единица (`superdough.mjs:186`).
@@ -59,6 +59,26 @@ static func configure(voice: StrudelVoice, value: Dictionary, length: float,
 	var sound := String(value.get("s", value.get("sound", DEFAULT_SOUND)))
 	var is_synth := sound == "" or SYNTHS.has(sound)
 	var picked := {}
+
+	# Саундфонт: адресация "sf:<банк>:<программа>", как в Strudel.
+	if sound.begins_with("sf:") and soundfont != null and soundfont.loaded:
+		var parts := sound.split(":")
+		var sf_bank := int(parts[1]) if parts.size() > 1 else 0
+		var sf_program := int(parts[2]) if parts.size() > 2 else 0
+		picked = soundfont.resolve(sf_bank, sf_program, note_midi)
+		if not picked.is_empty():
+			voice.envelope = StrudelEnvelope.from_values(
+				value.get("attack"), value.get("decay"),
+				value.get("sustain"), value.get("release")
+			)
+			voice.source = StrudelVoice.Source.SAMPLE
+			voice.sample = picked["data"]
+			voice.sample_rate = float(picked["rate"])
+			voice.sample_loop = bool(picked.get("loop", false))
+			voice.speed = voice.speed * float(picked.get("speed", 1.0))
+			# Собственное ослабление пресета — в децибелах, как в SF2.
+			voice.gain *= db_to_linear(float(picked.get("attenuation_db", 0.0)))
+			return
 
 	if not is_synth and bank != null and not bank.is_empty():
 		picked = bank.resolve(

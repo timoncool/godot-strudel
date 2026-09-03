@@ -40,6 +40,9 @@ signal voices_exhausted(total_stolen: int, limit: int)
 ## Папка с сэмплами и картами формата Strudel. Пустая строка — только синтез.
 @export_dir var samples_path := ""
 
+## Файл саундфонта (.sf2). Звуки из него адресуются как `sf:<банк>:<программа>`.
+@export_file("*.sf2") var soundfont_path := ""
+
 ## Темп в циклах в минуту. `setcpm(...)` в самом коде перебивает это значение.
 @export_range(1.0, 600.0, 0.1) var cycles_per_minute := 30.0:
 	set(value):
@@ -116,6 +119,15 @@ func _build() -> void:
 			push_warning("Strudel: в папке \"%s\" не нашлось сэмплов — играю синтезом." % samples_path)
 	_engine.bank = _bank
 
+	if soundfont_path != "":
+		var sf := StrudelSoundFont.new()
+		if sf.load_file(soundfont_path):
+			_engine.soundfont = sf
+			print("Strudel: саундфонт «%s» — пресетов %d, звуков %d"
+				% [soundfont_path.get_file(), sf.preset_count(), sf.sample_count()])
+		else:
+			push_warning("Strudel: саундфонт \"%s\" не прочитался" % soundfont_path)
+
 	var stream := AudioStreamGenerator.new()
 	stream.mix_rate = AudioServer.get_mix_rate()
 	stream.buffer_length = 0.1
@@ -166,6 +178,13 @@ func set_code(new_code: String) -> bool:
 	## звучащие голоса доигрывают, новые события идут по новому паттерну.
 	code = new_code
 	return _apply_code(new_code)
+
+
+func set_soundfont(sf: StrudelSoundFont) -> void:
+	## Поставить готовый саундфонт вместо загрузки по пути.
+	if _engine == null:
+		_build()
+	_engine.soundfont = sf
 
 
 func set_bank(new_bank: StrudelSampleBank) -> void:
