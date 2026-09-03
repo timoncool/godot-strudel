@@ -168,6 +168,21 @@ func set_code(new_code: String) -> bool:
 	return _apply_code(new_code)
 
 
+func set_bank(new_bank: StrudelSampleBank) -> void:
+	## Поставить готовый банк вместо загрузки из папки.
+	##
+	## Нужен проектам со своим форматом описи: они переводят её в банк плагина
+	## сами, а плагин про их формат не знает.
+	if _engine == null:
+		_build()
+	_bank = new_bank
+	_engine.bank = new_bank
+
+
+func get_bank() -> StrudelSampleBank:
+	return _bank
+
+
 func set_pattern(pattern: StrudelPattern) -> void:
 	## Программный вход: паттерн, собранный из GDScript, а не строкой.
 	if _engine == null:
