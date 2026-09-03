@@ -217,18 +217,6 @@ func _render(count: int) -> void:
 	for i in count:
 		_left[i] = 0.0
 		_right[i] = 0.0
-	for key in _orbits:
-		var orb: Dictionary = _orbits[key]
-		var rb: PackedFloat32Array = orb["room"]
-		var db: PackedFloat32Array = orb["delay"]
-		if rb.size() < count:
-			rb.resize(count)
-			db.resize(count)
-			orb["room"] = rb
-			orb["delay"] = db
-		for i in count:
-			rb[i] = 0.0
-			db[i] = 0.0
 
 	_ensure_scheduled(_frames_written + count + int(lookahead * mix_rate))
 
@@ -242,6 +230,22 @@ func _render(count: int) -> void:
 		if frame < _frames_written:
 			frame = _frames_written  # опоздавшее — играем сразу, а не теряем
 		_trigger(next["value"], next["length"], frame - _frames_written, count)
+
+	# 🔴 Шины орбит готовятся ПОСЛЕ запуска событий, а не до: событие может
+	# завести НОВУЮ орбиту, и её буферы иначе остались бы пустыми — голос
+	# писал бы в них и ронял смешивание.
+	for key in _orbits:
+		var orb0: Dictionary = _orbits[key]
+		var rb: PackedFloat32Array = orb0["room"]
+		var db: PackedFloat32Array = orb0["delay"]
+		if rb.size() < count:
+			rb.resize(count)
+			db.resize(count)
+			orb0["room"] = rb
+			orb0["delay"] = db
+		for i in count:
+			rb[i] = 0.0
+			db[i] = 0.0
 
 	for v in _voices:
 		if v.active:
