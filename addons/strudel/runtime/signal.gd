@@ -122,7 +122,14 @@ static func _int_seed_to_rand(x: int) -> float:
 
 static func time_to_rands(t: float, n: int) -> Array:
 	## n случайных чисел в момент t. Порядок и значения — как в Strudel.
+	##
+	## 🔴 ОДНО число берётся ПО МОДУЛЮ, а несколько — как есть
+	## (`__timeToRandsPrime`, `signal.mjs:277`). Это не описка оригинала, а
+	## его поведение: `rand` всегда неотрицателен, а `randL` может дать
+	## минус. Пока модуль стоял у вызывающих, шум «берлин» уходил в минус.
 	var seed := _time_to_int_seed(t)
+	if n == 1:
+		return [absf(_int_seed_to_rand(seed))]
 	var out: Array = []
 	for i in n:
 		out.append(_int_seed_to_rand(seed))
@@ -130,8 +137,66 @@ static func time_to_rands(t: float, n: int) -> Array:
 	return out
 
 
+## Какой лад случайного включён. «legacy» — тот, что в Strudel по умолчанию.
+static var rng_mode := "legacy"
+
+
+static func use_rng(mode: String = "legacy") -> void:
+	## Переключение лада случайного (`useRNG`).
+	##
+	## 🔴 «legacy» — УМОЛЧАНИЕ, и менять его без нужды нельзя: на нём стоит
+	## вся сверка с Булкой. «precise» ровнее по статистике, но даёт другие
+	## числа, а значит и другую партию.
+	if mode != "legacy" and mode != "precise":
+		push_warning("Strudel: не знаю лада случайного \"%s\" — оставляю legacy" % mode)
+		return
+	rng_mode = mode
+
+
 static func rands_at_time(t: float, n: int = 1, seed_offset: float = 0.0) -> Array:
+	if rng_mode == "precise":
+		return _precise_rands(t, n, seed_offset)
 	return time_to_rands(t + seed_offset, n)
+
+
+static func _precise_rands(t: float, n: int, seed: float) -> Array:
+	## Лад «precise»: время переводится в целое, потом хеш Мурмура.
+	##
+	## 🔴 Время берётся с шагом 1/2²⁹ — так задумано: соседние доли круга
+	## должны давать РАЗНЫЕ числа, а не одно и то же.
+	var big := int(floor(t * 536870912.0))
+	var s := int(seed)
+	if n == 1:
+		return [_rand_at(big, 0, s)]
+	var out: Array = []
+	for i in n:
+		out.append(_rand_at(big, i, s))
+	return out
+
+
+static func _rand_at(big_t: int, i: int, seed: int) -> float:
+	return float(_murmur_final(_decorrelate(big_t, i, seed))) / 4294967296.0
+
+
+static func _decorrelate(big_t: int, i: int, seed: int) -> int:
+	## Развести близкие время, номер и зерно, чтобы хеш их не слепил.
+	var low := StrudelUtil.u32(big_t)
+	var high := StrudelUtil.u32(int(floor(float(big_t) / 4294967296.0)))
+	var key := low ^ StrudelUtil.u32(StrudelUtil.imul32(high ^ 0x85ebca6b, 0xc2b2ae35))
+	key ^= StrudelUtil.u32(StrudelUtil.imul32(i ^ 0x7f4a7c15, 0x9e3779b9))
+	key ^= StrudelUtil.u32(StrudelUtil.imul32(seed ^ 0x165667b1, 0x27d4eb2d))
+	return StrudelUtil.u32(key)
+
+
+static func _murmur_final(x: int) -> int:
+	## Завершающая мешалка хеша Мурмура — вся в тридцати двух битах.
+	var v := StrudelUtil.u32(x)
+	v ^= StrudelUtil.ushr32(v, 16)
+	v = StrudelUtil.u32(StrudelUtil.imul32(v, 0x85ebca6b))
+	v ^= StrudelUtil.ushr32(v, 13)
+	v = StrudelUtil.u32(StrudelUtil.imul32(v, 0xc2b2ae35))
+	v ^= StrudelUtil.ushr32(v, 16)
+	return StrudelUtil.u32(v)
 
 
 static func rand() -> StrudelPattern:
@@ -180,6 +245,119 @@ static func perlin() -> StrudelPattern:
 	return make_signal(func(t: StrudelFraction, controls: Dictionary):
 		return _perlin_at(t.to_float(), float(controls.get("randSeed", 0.0)))
 	)
+
+
+static func berlin() -> StrudelPattern:
+	## Шум «берлин»: тот же перлин, но переходы ПРЯМЫЕ, а не сглаженные,
+	## и каждая ступень строится от предыдущей. Выходит лесенка вверх —
+	## отсюда и восходящие арпеджио, ради которых его завели.
+	return make_signal(func(t: StrudelFraction, controls: Dictionary):
+		var off: float = float(controls.get("randSeed", 0.0))
+		var x := t.to_float()
+		var prev := floor(x)
+		var bottom: float = rands_at_time(prev, 1, off)[0]
+		var height: float = rands_at_time(prev + 1.0, 1, off)[0]
+		var top: float = bottom + height
+		var frac: float = x - prev
+		return (bottom + frac * (top - bottom)) / 2.0
+	)
+
+
+static func rand_list(n: Variant) -> StrudelPattern:
+	## `randL` — СПИСОК случайных чисел одним значением. Нужен там, где
+	## параметр берёт список: веса обертонов, фазы.
+	return make_signal(func(t: StrudelFraction, _controls: Dictionary) -> Callable:
+		var time := t.to_float()
+		return func(count) -> Array:
+			var out: Array = []
+			for v in rands_at_time(time, maxi(int(StrudelPattern._num(count)), 1)):
+				out.append(absf(StrudelPattern._num(v)))
+			return out
+	).app_left(StrudelPattern.reify(n))
+
+
+static func binary_n(n: Variant, bits: Variant = 16) -> StrudelPattern:
+	## Число → ряд нулей и единиц, старший бит СПРАВА.
+	var bits_pat := StrudelPattern.reify(bits)
+	return bits_pat.fmap(func(b) -> StrudelPattern:
+		var width := maxi(int(StrudelPattern._num(b)), 1)
+		var order: Array = []
+		for i in width:
+			order.append(width - 1 - i)
+		return StrudelPattern.reify(n)._segment(width).fmap(func(v) -> Callable:
+			var num := int(StrudelPattern._num(v))
+			return func(bit) -> int:
+				return (num >> int(StrudelPattern._num(bit))) & 1
+		).app_left(StrudelPattern.sequence(order))
+	).inner_join()
+
+
+static func binary_(n: Variant) -> StrudelPattern:
+	## Столько разрядов, сколько нужно самому числу.
+	return StrudelPattern.reify(n).fmap(func(v) -> StrudelPattern:
+		return binary_n(v, _bit_width(StrudelPattern._num(v)))
+	).inner_join()
+
+
+static func binary_list(n: Variant) -> StrudelPattern:
+	## То же, но СПИСКОМ в одном значении — для `partials`.
+	return StrudelPattern.reify(n).fmap(func(v) -> StrudelPattern:
+		return binary_n_list(v, _bit_width(StrudelPattern._num(v)))
+	).inner_join()
+
+
+static func binary_n_list(n: Variant, bits: Variant = 16) -> StrudelPattern:
+	return StrudelPattern.reify(n).with_value(func(v) -> Callable:
+		return func(b) -> Array:
+			var width := maxi(int(StrudelPattern._num(b)), 1)
+			var num := int(StrudelPattern._num(v))
+			var out: Array = []
+			for i in range(width - 1, -1, -1):
+				out.append((num >> i) & 1)
+			return out
+	).app_left(StrudelPattern.reify(bits))
+
+
+static func _bit_width(v: float) -> int:
+	## Сколько разрядов занимает число.
+	var num := maxi(int(v), 0)
+	if num <= 0:
+		return 1
+	return int(floor(log(float(num)) / log(2.0))) + 1
+
+
+static func wchoose_with(pat: StrudelPattern, pairs: Array) -> StrudelPattern:
+	## Выбор из списка ПО ВЕСАМ, где указатель — заданный паттерн 0..1.
+	##
+	## 🔴 Веса накапливаются НАРАСТАЮЩИМ ИТОГОМ, и берётся первый, который
+	## перевалил за долю: так вес прямо задаёт ширину участка.
+	var values: Array = []
+	var totals: Array = []
+	var total := 0.0
+	for pair in pairs:
+		var p: Array = pair if pair is Array else [pair, 1]
+		values.append(StrudelPattern.reify(p[0]))
+		total += StrudelPattern._num(p[1]) if p.size() > 1 else 1.0
+		totals.append(total)
+	if values.is_empty():
+		return StrudelPattern.silence()
+	return pat.fmap(func(r) -> StrudelPattern:
+		var find := total * StrudelPattern._num(r)
+		for i in totals.size():
+			if float(totals[i]) > find:
+				return values[i]
+		return values[values.size() - 1]
+	)
+
+
+static func wchoose(pairs: Array) -> StrudelPattern:
+	## Непрерывный выбор по весам.
+	return wchoose_with(rand(), pairs).outer_join()
+
+
+static func wchoose_cycles(pairs: Array) -> StrudelPattern:
+	## Выбор по весам РАЗ В КРУГ.
+	return wchoose_with(rand()._segment(1), pairs).inner_join()
 
 
 static func run(n: Variant) -> StrudelPattern:

@@ -87,3 +87,14 @@ func test_отрицательное_и_дробное_окно_запроса()
 	# Проверено на живой Булке: queryArc(1,1) там тоже даёт одно событие.
 	eq(pat.query_arc(1, 1).size(), 1, "окно нулевой длины даёт одно событие")
 	eq(pat.query_arc(0.25, 0.25).size(), 1, "и в середине доли тоже")
+
+
+func test_шаблонные_строки_со_вставками() -> void:
+	# 🔴 Вставка считается ДО mini-нотации: сперва собирается строка, и уже
+	# её разбирает Strudel. Иначе `${n}` уехало бы в разбор текстом.
+	var r := StrudelRuntime.run("const n = 3\nnote(`c${n} e${n}`)")
+	check(r.get("ok", false), "шаблон разобрался: %s" % r.get("error", ""))
+	var haps: Array = (r["pattern"] as StrudelPattern).query_arc(0, 1)
+	check(haps.size() == 2, "две ноты, вышло %d" % haps.size())
+	eq(str((haps[0] as StrudelHap).value.get("note")), "c3", "первая нота собралась")
+	eq(str((haps[1] as StrudelHap).value.get("note")), "e3", "вторая нота собралась")

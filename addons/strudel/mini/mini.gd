@@ -13,6 +13,7 @@ const RAND_OFFSET := 0.0003
 
 static func mini(text: String) -> StrudelPattern:
 	## Строка mini-нотации → паттерн. Ошибка разбора сообщается с позицией.
+	##
 	var parsed := StrudelKrillParser.parse(text)
 	if not parsed.get("ok", false):
 		var pos: int = parsed.get("pos", -1)

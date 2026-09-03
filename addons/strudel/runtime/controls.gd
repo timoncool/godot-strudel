@@ -68,17 +68,28 @@ static func main_name(name: String) -> String:
 
 static func adsr(pat: StrudelPattern, value: Variant) -> StrudelPattern:
 	## Вся огибающая одним доводом: `.adsr(".1:.1:.5:.2")`.
-	var list: Array = value if value is Array else [value]
-	var out := pat
-	var names := ["attack", "decay", "sustain", "release"]
-	var fields := {}
-	for i in mini(list.size(), names.size()):
-		fields[names[i]] = list[i]
-	return _set_fields(out, fields)
+	##
+	## 🔴 Довод приходит ПАТТЕРНОМ, а не готовым списком: `.1:.1:.5:.2` — это
+	## mini-нотация, и список появляется только при выборке события. Пока
+	## список брался напрямую, весь паттерн уезжал в поле `attack`.
+	return pat._patternify([value], func(vals: Array) -> StrudelPattern:
+		var list: Array = vals[0] if vals[0] is Array else [vals[0]]
+		var names := ["attack", "decay", "sustain", "release"]
+		var fields := {}
+		for i in mini(list.size(), names.size()):
+			fields[names[i]] = list[i]
+		return _set_fields(pat, fields)
+	)
 
 
 static func ad(pat: StrudelPattern, value: Variant) -> StrudelPattern:
 	## Атака и спад. Одно число значит «спад такой же, как атака».
+	return pat._patternify([value], func(vals: Array) -> StrudelPattern:
+		return _ad_of(pat, vals[0])
+	)
+
+
+static func _ad_of(pat: StrudelPattern, value: Variant) -> StrudelPattern:
 	var list: Array = value if value is Array else [value]
 	if list.is_empty():
 		return pat
@@ -92,6 +103,12 @@ static func ad(pat: StrudelPattern, value: Variant) -> StrudelPattern:
 
 static func ds(pat: StrudelPattern, value: Variant) -> StrudelPattern:
 	## Спад и уровень удержания. Одно число значит «удержание в нуле».
+	return pat._patternify([value], func(vals: Array) -> StrudelPattern:
+		return _ds_of(pat, vals[0])
+	)
+
+
+static func _ds_of(pat: StrudelPattern, value: Variant) -> StrudelPattern:
 	var list: Array = value if value is Array else [value]
 	if list.is_empty():
 		return pat
@@ -103,6 +120,12 @@ static func ds(pat: StrudelPattern, value: Variant) -> StrudelPattern:
 
 static func ar(pat: StrudelPattern, value: Variant) -> StrudelPattern:
 	## Атака и отпускание. Одно число значит «отпускание такое же».
+	return pat._patternify([value], func(vals: Array) -> StrudelPattern:
+		return _ar_of(pat, vals[0])
+	)
+
+
+static func _ar_of(pat: StrudelPattern, value: Variant) -> StrudelPattern:
 	var list: Array = value if value is Array else [value]
 	if list.is_empty():
 		return pat
@@ -123,6 +146,14 @@ static func control(pat: StrudelPattern, args: Variant) -> StrudelPattern:
 static func as_(pat: StrudelPattern, mapping: Variant) -> StrudelPattern:
 	## Раздать значения события по именам параметров:
 	## `"c:.5 a:1".as("note:clip")` — первое в note, второе в clip.
+	##
+	## 🔴 Имена приходят ПАТТЕРНОМ: `note:clip` — та же mini-нотация.
+	return pat._patternify([mapping], func(vals: Array) -> StrudelPattern:
+		return _as_of(pat, vals[0])
+	)
+
+
+static func _as_of(pat: StrudelPattern, mapping: Variant) -> StrudelPattern:
 	var names: Array = mapping if mapping is Array else [mapping]
 	return pat.fmap(func(v) -> Dictionary:
 		var list: Array = v if v is Array else [v]

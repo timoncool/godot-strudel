@@ -1654,7 +1654,7 @@ func hsl(h: Variant, s: Variant, l: Variant) -> StrudelPattern:
 	## Цвет события в HSL. Оттенок задаётся ОБОРОТАМИ (turn), а не градусами.
 	var me := self
 	return _patternify([h, s, l], func(vals: Array) -> StrudelPattern:
-		return me.ctrl("color", "hsl(%sturn,%s%%,%s%%)" % [
+		return me._color_value("hsl(%sturn,%s%%,%s%%)" % [
 			StrudelPattern._css_num(vals[0]),
 			StrudelPattern._css_num(StrudelPattern._num(vals[1]) * 100.0),
 			StrudelPattern._css_num(StrudelPattern._num(vals[2]) * 100.0)])
@@ -1665,12 +1665,24 @@ func hsla(h: Variant, s: Variant, l: Variant, a: Variant) -> StrudelPattern:
 	## То же с прозрачностью.
 	var me := self
 	return _patternify([h, s, l, a], func(vals: Array) -> StrudelPattern:
-		return me.ctrl("color", "hsla(%sturn,%s%%,%s%%,%s)" % [
+		return me._color_value("hsla(%sturn,%s%%,%s%%,%s)" % [
 			StrudelPattern._css_num(vals[0]),
 			StrudelPattern._css_num(StrudelPattern._num(vals[1]) * 100.0),
 			StrudelPattern._css_num(StrudelPattern._num(vals[2]) * 100.0),
 			StrudelPattern._css_num(vals[3])])
 	)
+
+
+func _color_value(text: String) -> StrudelPattern:
+	## Цвет кладётся ЗНАЧЕНИЕМ, а не через общий путь параметров.
+	##
+	## 🔴 Обычный путь прогоняет довод через mini-нотацию, а строка вида
+	## `hsl(0.5turn,100%,50%)` для неё — набор скобок и процентов. В Strudel
+	## это заканчивается разбором в кашу (в эталоне у события ЦВЕТА НЕТ
+	## вовсе); у нас разбор честно ругается. Ни то ни другое игроку не
+	## нужно, поэтому цвет ставится напрямую. Единственное намеренное
+	## расхождение с оригиналом, и оно записано в docs/COMPARISON.md.
+	return set_([StrudelPattern.pure({"color": text})])
 
 
 static func _css_num(v: Variant) -> String:
@@ -1955,6 +1967,11 @@ static func _op_value(op_name: String, a: Variant, b: Variant) -> Variant:
 static func _num(x: Variant) -> float:
 	if x is int or x is float:
 		return float(x)
+	# 🔴 Дробь — тоже число. Без этой ветки `_num` отдавал NAN, и число шагов
+	# паттерна превращалось в мусор: `shrink` и `grow` молча не давали
+	# ни одного события.
+	if x is StrudelFraction:
+		return (x as StrudelFraction).to_float()
 	if x is bool:
 		return 1.0 if x else 0.0
 	if x is String or x is StringName:

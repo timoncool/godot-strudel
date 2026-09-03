@@ -167,9 +167,14 @@ func _tokenize(src: String) -> Array:
 				_fail("не закрыта кавычка", {"line": line, "col": col})
 				return toks
 			if quote == "`" and text.contains("${"):
-				_fail("шаблонные строки со вставками ${…} не поддержаны — вынеси значение в переменную",
-					{"line": line, "col": col})
-				return toks
+				# 🔴 Вставка `${…}` считается ЕЩЁ ДО mini-нотации: сначала JS
+				# собирает строку, и только собранную разбирает Strudel.
+				# Поэтому здесь слово помечается шаблоном, а куски
+				# доразбираются отдельно — иначе `${n}` уехало бы в
+				# mini-нотацию текстом и стало бы словом-именем.
+				toks.append({"t": "tpl", "v": text, "line": line, "col": col, "pos": i})
+				i = j + 1
+				continue
 			# 🔴 Вид кавычки ЗАПОМИНАЕТСЯ: в Strudel двойные кавычки — это
 			# mini-нотация, а одинарные — обычная строка. Поэтому
 			# samples('https://…') остаётся ссылкой, а "bd sd" становится
@@ -481,6 +486,9 @@ func _primary() -> Dictionary:
 		"num":
 			_i += 1
 			return {"t": "num", "v": t["v"]}
+		"tpl":
+			_i += 1
+			return _template(String(t["v"]))
 		"str":
 			_i += 1
 			return {"t": "str", "v": t["v"], "mini": String(t.get("q", "\"")) != "'"}
@@ -561,3 +569,50 @@ func _object() -> Dictionary:
 	if not _expect("}"):
 		return {}
 	return {"t": "object", "pairs": pairs}
+
+
+func _template(text: String) -> Dictionary:
+	## Шаблонная строка со вставками → узел «склейка кусков».
+	##
+	## Куски текста остаются текстом, вставки разбираются как выражения.
+	## Готовая строка потом уходит в mini-нотацию — как и обычные обратные
+	## кавычки без вставок.
+	var parts: Array = []
+	var plain := ""
+	var i := 0
+	var n := text.length()
+	while i < n:
+		if text[i] == "$" and i + 1 < n and text[i + 1] == "{":
+			var depth := 1
+			var j := i + 2
+			while j < n:
+				if text[j] == "{":
+					depth += 1
+				elif text[j] == "}":
+					depth -= 1
+					if depth == 0:
+						break
+				j += 1
+			if depth != 0:
+				_fail("не закрыта вставка ${…}", _peek())
+				return {}
+			if plain != "":
+				parts.append({"t": "str", "v": plain, "mini": false})
+				plain = ""
+			var inner := text.substr(i + 2, j - i - 2)
+			var sub := StrudelCodeParser.parse(inner)
+			if not sub.get("ok", false):
+				_fail("во вставке ${…}: %s" % sub.get("error", "?"), _peek())
+				return {}
+			var program: Array = sub["program"]
+			if program.is_empty():
+				_fail("пустая вставка ${}", _peek())
+				return {}
+			parts.append(program[program.size() - 1]["value"])
+			i = j + 1
+			continue
+		plain += text[i]
+		i += 1
+	if plain != "":
+		parts.append({"t": "str", "v": plain, "mini": false})
+	return {"t": "tpl", "parts": parts}

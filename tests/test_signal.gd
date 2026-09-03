@@ -72,3 +72,20 @@ func test_32_битный_xorshift_не_переполняется() -> void:
 	for cycle in [0, 1, 7, 299, 300, 301, 1000]:
 		var r: float = StrudelSignal.rands_at_time(float(cycle), 1)[0]
 		check(r > -1.0001 and r < 1.0001, "rand на цикле %d в пределах: %f" % [cycle, r])
+
+
+func test_precise_совпадает_с_булкой() -> void:
+	# Второй лад случайного (`useRNG("precise")`): время переводится в целое
+	# с шагом 1/2²⁹, дальше хеш Мурмура. Числа сняты с живой Булки.
+	#
+	# 🔴 Лад ОБЩИЙ на весь плагин, поэтому в конце его надо вернуть: иначе
+	# следующая проверка считала бы другим случайным.
+	const WANT := [0.388089305, 0.654663742, 0.129392430,
+		0.854245374, 0.326895113, 0.697713275]
+	StrudelSignal.use_rng("precise")
+	for i in WANT.size():
+		var got: float = StrudelSignal.rands_at_time(float(i) / 8.0, 1, 0.0)[0]
+		eq_num(got, WANT[i], 1e-9, "precise[%d]" % i)
+	StrudelSignal.use_rng("legacy")
+	var back: float = StrudelSignal.rands_at_time(0.0, 1, 0.0)[0]
+	check(absf(back - WANT[0]) > 1e-6, "лад вернулся к legacy")

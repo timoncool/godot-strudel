@@ -83,6 +83,10 @@ func _frac(text: String) -> float:
 	return float(bits[0].to_int()) / float(bits[1].to_int())
 
 
+## Поля, которые сравнивать нечем: см. OPAQUE в compare.py.
+const OPAQUE := ["__ids"]
+
+
 func _canon(v: Variant) -> String:
 	## Каноническая запись значения. Ключи словаря сортируются: их порядок
 	## музыкального смысла не несёт, а различался бы на ровном месте.
@@ -104,6 +108,11 @@ func _canon(v: Variant) -> String:
 		keys.sort()
 		var pairs: Array[String] = []
 		for k in keys:
+			# 🔴 `__ids` — множество в JS, а JSON печатает его пустым
+			# объектом: содержимого в эталоне нет, сверять нечего.
+			if OPAQUE.has(String(k)):
+				pairs.append(JSON.stringify(String(k)) + ":«есть»")
+				continue
 			pairs.append(JSON.stringify(String(k)) + ":" + _canon((v as Dictionary)[k]))
 		return "{" + ",".join(pairs) + "}"
 	return JSON.stringify(str(v))

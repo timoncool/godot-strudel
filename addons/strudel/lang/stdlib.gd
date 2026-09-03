@@ -65,6 +65,7 @@ static func global_value(name: String) -> Variant:
 		"rand2": return StrudelSignal.rand2()
 		"brand": return StrudelSignal.brand()
 		"perlin": return StrudelSignal.perlin()
+		"berlin": return StrudelSignal.berlin()
 		"time": return StrudelSignal.time()
 		"Math": return {"__ns": "Math"}
 	return null
@@ -169,7 +170,32 @@ static func global_call(rt, name: String, args: Array) -> Variant:
 		# тональные
 		"chord", "voicing", "mode", "scale", "rootNotes", "transpose", "arp", "arpWith", "note", "n":
 			return _tonal_or_control(rt, name, args)
-		"initHydra", "hush", "all", "samples", "setDefaultJoin", "useRNG", "calculateSteps":
+		"randL": return StrudelSignal.rand_list(_arg(args, 0))
+		"zip", "s_zip": return StrudelStepwise.zip(_flat(args))
+		"tour", "s_tour":
+			var many := _flat(args)
+			if many.is_empty():
+				return StrudelPattern.silence()
+			return StrudelStepwise.tour(_pat(many[0]), many.slice(1))
+		"randrun": return StrudelSignal.randrun(int(_f(_arg(args, 0))))
+		"binary": return StrudelSignal.binary_(_arg(args, 0))
+		"binaryN":
+			return StrudelSignal.binary_n(_arg(args, 0),
+				_arg(args, 1) if args.size() > 1 else 16)
+		"binaryL": return StrudelSignal.binary_list(_arg(args, 0))
+		"binaryNL":
+			return StrudelSignal.binary_n_list(_arg(args, 0),
+				_arg(args, 1) if args.size() > 1 else 16)
+		"wchoose":
+			# 🔴 Доводы здесь — ПАРЫ «значение, вес», и разворачивать их
+			# нельзя: получился бы плоский ряд, где вес играет нотой.
+			return StrudelSignal.wchoose(args)
+		"wchooseCycles", "wrandcat":
+			return StrudelSignal.wchoose_cycles(args)
+		"useRNG":
+			StrudelSignal.use_rng(StrudelUtil.text(_arg(args, 0)))
+			return null
+		"initHydra", "hush", "all", "samples", "setDefaultJoin", "calculateSteps":
 			# Не влияет на события: тихо пропускаем, чтобы чужой код не падал.
 			return null
 

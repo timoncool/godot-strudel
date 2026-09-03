@@ -123,6 +123,14 @@ func _eval(node: Variant, locals: Dictionary = {}) -> Variant:
 				return _eval(body, inner)
 		"unary":
 			return _unary(String(n["op"]), _eval(n["arg"], locals))
+		"tpl":
+			# Куски складываются в строку, и уже она разбирается как
+			# mini-нотация: так же поступает JS с обратными кавычками.
+			var text := ""
+			for part in n["parts"]:
+				var piece: Variant = _eval(part, locals)
+				text += StrudelUtil.text(piece)
+			return StrudelMini.mini(text)
 		"bin":
 			return _binary(String(n["op"]), _eval(n["l"], locals), _eval(n["r"], locals))
 		"member":

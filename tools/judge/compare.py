@@ -24,6 +24,12 @@ GOLDEN = HERE / "golden" / "haps.json"
 MINE = HERE / "golden" / "godot.json"
 
 
+## Поля, которые СРАВНИВАТЬ НЕЛЬЗЯ: в JS это множества (Set), а JSON
+## печатает их пустым объектом — содержимого в эталоне попросту нет.
+## Сверяется только само наличие поля.
+OPAQUE = {"__ids"}
+
+
 def canon(v) -> str:
     """Та же каноническая запись, что в run_corpus.gd."""
     if v is None:
@@ -38,7 +44,8 @@ def canon(v) -> str:
         return "[" + ",".join(canon(x) for x in v) + "]"
     if isinstance(v, dict):
         return "{" + ",".join(
-            json.dumps(str(k), ensure_ascii=False) + ":" + canon(v[k])
+            json.dumps(str(k), ensure_ascii=False) + ":"
+            + ("«есть»" if k in OPAQUE else canon(v[k]))
             for k in sorted(v.keys())
         ) + "}"
     return json.dumps(str(v), ensure_ascii=False)

@@ -1,125 +1,724 @@
 [
-  { "id": "mini/plain", "expr": "s(\"bd sd\")", "to": 1 },
-  { "id": "mini/rest", "expr": "s(\"bd ~ sd ~\")", "to": 1 },
-  { "id": "mini/dash-rest", "expr": "s(\"bd - sd -\")", "to": 1 },
-  { "id": "mini/group", "expr": "s(\"bd [sd sd] hh\")", "to": 1 },
-  { "id": "mini/nested", "expr": "s(\"[bd [sd [hh cp]]] bd\")", "to": 1 },
-  { "id": "mini/fast", "expr": "s(\"bd sd*2 ~ hh\")", "to": 1 },
-  { "id": "mini/fast-group", "expr": "s(\"[bd sd]*3\")", "to": 1 },
-  { "id": "mini/slow", "expr": "s(\"bd/2 sd\")", "to": 4 },
-  { "id": "mini/replicate", "expr": "s(\"bd!3 sd\")", "to": 1 },
-  { "id": "mini/replicate-bang", "expr": "s(\"bd!! sd\")", "to": 1 },
-  { "id": "mini/weight", "expr": "s(\"bd@3 sd\")", "to": 1 },
-  { "id": "mini/weight-underscore", "expr": "s(\"bd _ _ sd\")", "to": 1 },
-  { "id": "mini/index", "expr": "s(\"bd:3 sd:1\")", "to": 1 },
-  { "id": "mini/alt", "expr": "s(\"<bd sd hh>\")", "to": 3 },
-  { "id": "mini/alt-in-seq", "expr": "s(\"<bd sd> hh\")", "to": 2 },
-  { "id": "mini/stack-comma", "expr": "s(\"bd*2, hh*3\")", "to": 1 },
-  { "id": "mini/polymeter", "expr": "s(\"{bd sd, hh hh hh}\")", "to": 2 },
-  { "id": "mini/polymeter-steps", "expr": "s(\"{bd sd, hh hh hh}%4\")", "to": 2 },
-  { "id": "mini/euclid", "expr": "s(\"bd(3,8)\")", "to": 1 },
-  { "id": "mini/euclid-rot", "expr": "s(\"bd(3,8,2)\")", "to": 1 },
-  { "id": "mini/euclid-neg", "expr": "s(\"bd(-3,8)\")", "to": 1 },
-  { "id": "mini/feet", "expr": "s(\"bd sd . hh hh hh\")", "to": 1 },
-  { "id": "mini/range", "expr": "n(\"0 .. 3\")", "to": 1 },
-  { "id": "mini/complex", "expr": "s(\"<[bd(3,8,2) ~]!2 [sd:1@3 hh*4]>, ~ cp\")", "to": 4 },
-
-  { "id": "comb/stack", "expr": "stack(s(\"bd*2\"), s(\"hh*3\"))", "to": 1 },
-  { "id": "comb/cat", "expr": "cat(s(\"bd\"), s(\"sd\"), s(\"hh\"))", "to": 3 },
-  { "id": "comb/fastcat", "expr": "fastcat(s(\"bd\"), s(\"sd\"), s(\"hh\"))", "to": 1 },
-  { "id": "comb/timecat", "expr": "timeCat([3, s(\"bd\")], [1, s(\"sd\")])", "to": 1 },
-  { "id": "comb/arrange", "expr": "arrange([2, s(\"bd*2\")], [1, s(\"sd*3\")])", "to": 3 },
-  { "id": "comb/superimpose", "expr": "s(\"bd sd\").superimpose(x => x.fast(2))", "to": 1 },
-  { "id": "comb/layer", "expr": "n(\"0 2\").layer(x => x.add(3), x => x.add(7))", "to": 1 },
-
-  { "id": "time/fast", "expr": "s(\"bd sd\").fast(2)", "to": 1 },
-  { "id": "time/slow", "expr": "s(\"bd sd\").slow(2)", "to": 2 },
-  { "id": "time/fast-pat", "expr": "s(\"bd sd\").fast(\"<1 2 3>\")", "to": 3 },
-  { "id": "time/early", "expr": "s(\"bd sd\").early(0.25)", "to": 1 },
-  { "id": "time/late", "expr": "s(\"bd sd\").late(0.25)", "to": 1 },
-  { "id": "time/rev", "expr": "s(\"bd sd hh cp\").rev()", "to": 1 },
-  { "id": "time/iter4", "expr": "n(\"0 1 2 3\").iter(4)", "to": 4 },
-  { "id": "time/iterback", "expr": "n(\"0 1 2 3\").iterBack(4)", "to": 4 },
-  { "id": "time/ply3", "expr": "s(\"bd ~ sd cp\").ply(3)", "to": 1 },
-  { "id": "time/off", "expr": "n(\"0 3\").off(0.125, x => x.add(7))", "to": 1 },
-  { "id": "time/jux-rev", "expr": "s(\"bd sd hh\").jux(rev)", "to": 1 },
-  { "id": "time/juxby", "expr": "s(\"bd sd\").juxBy(0.5, rev)", "to": 1 },
-  { "id": "time/struct", "expr": "n(\"0\").struct(\"x ~ x x ~ x ~ ~\")", "to": 1 },
-  { "id": "time/mask", "expr": "n(\"0 1 2 3\").mask(\"1 0 1 1\")", "to": 1 },
-  { "id": "time/segment", "expr": "saw.segment(8)", "to": 1 },
-  { "id": "time/swingby", "expr": "s(\"hh*8\").swingBy(0.23, 4)", "to": 1 },
-  { "id": "time/swing", "expr": "s(\"hh*8\").swing(4)", "to": 1 },
-  { "id": "time/striate", "expr": "s(\"bd sd\").striate(3)", "to": 1 },
-  { "id": "time/chop", "expr": "s(\"bd sd\").chop(2)", "to": 1 },
-  { "id": "time/compress", "expr": "s(\"bd sd\").compress(0.25, 0.75)", "to": 1 },
-  { "id": "time/zoom", "expr": "s(\"bd sd hh cp\").zoom(0.25, 0.75)", "to": 1 },
-  { "id": "time/every", "expr": "n(\"0 1\").every(3, x => x.rev())", "to": 3 },
-  { "id": "time/palindrome", "expr": "n(\"0 1 2\").palindrome()", "to": 2 },
-  { "id": "time/press", "expr": "s(\"bd sd\").press()", "to": 1 },
-  { "id": "time/linger", "expr": "s(\"bd sd hh cp\").linger(0.5)", "to": 1 },
-  { "id": "time/echo", "expr": "s(\"bd\").echo(3, 0.125, 0.5)", "to": 1 },
-  { "id": "time/repeatCycles", "expr": "n(\"<0 1 2>\").repeatCycles(2)", "to": 4 },
-  { "id": "time/chunk", "expr": "n(\"0 1 2 3\").chunk(4, x => x.add(10))", "to": 4 },
-  { "id": "time/inside", "expr": "n(\"0 1 2 3\").inside(2, rev)", "to": 2 },
-  { "id": "time/ribbon", "expr": "n(\"<0 1 2 3>\").ribbon(1, 2)", "to": 4 },
-
-  { "id": "sig/sine-seg", "expr": "sine.segment(8)", "to": 1 },
-  { "id": "sig/cosine-seg", "expr": "cosine.segment(8)", "to": 1 },
-  { "id": "sig/saw-seg", "expr": "saw.segment(8)", "to": 1 },
-  { "id": "sig/isaw-seg", "expr": "isaw.segment(8)", "to": 1 },
-  { "id": "sig/tri-seg", "expr": "tri.segment(8)", "to": 1 },
-  { "id": "sig/square-seg", "expr": "square.segment(8)", "to": 1 },
-  { "id": "sig/sine-range", "expr": "sine.range(100, 200).segment(4)", "to": 2 },
-  { "id": "sig/sine-slow", "expr": "sine.slow(4).segment(4)", "to": 4 },
-  { "id": "sig/rand-seg", "expr": "rand.segment(8)", "to": 2 },
-  { "id": "sig/irand-seg", "expr": "irand(8).segment(8)", "to": 2 },
-  { "id": "sig/perlin-seg", "expr": "perlin.segment(8)", "to": 2 },
-  { "id": "sig/perlin-range", "expr": "perlin.range(0.97, 1.05).segment(8)", "to": 2 },
-  { "id": "sig/run", "expr": "run(4)", "to": 1 },
-
-  { "id": "rand/degradeBy", "expr": "s(\"hh*8\").degradeBy(0.25)", "to": 4 },
-  { "id": "rand/degrade", "expr": "s(\"hh*8\").degrade()", "to": 4 },
-  { "id": "rand/undegradeBy", "expr": "s(\"hh*8\").undegradeBy(0.25)", "to": 4 },
-  { "id": "rand/question", "expr": "s(\"hh*8?\")", "to": 4 },
-  { "id": "rand/question-amt", "expr": "s(\"hh*8?0.3\")", "to": 4 },
-  { "id": "rand/two-questions", "expr": "s(\"bd*4? sd*4?\")", "to": 4 },
-  { "id": "rand/sometimesBy", "expr": "n(\"0*8\").sometimesBy(0.4, x => x.add(12))", "to": 2 },
-  { "id": "rand/choose-pipe", "expr": "s(\"bd | sd | hh\")", "to": 8 },
-  { "id": "rand/shuffle", "expr": "n(\"0 1 2 3\").shuffle(4)", "to": 4 },
-  { "id": "rand/scramble", "expr": "n(\"0 1 2 3\").scramble(4)", "to": 4 },
-  { "id": "rand/seed", "expr": "s(\"hh*8\").degradeBy(0.5).seed(1)", "to": 2 },
-
-  { "id": "ctl/set", "expr": "note(\"c a f e\").s(\"sine\").set(s(\"triangle\"))", "to": 1 },
-  { "id": "ctl/add", "expr": "n(\"0 2 4\").add(\"<0 3>\")", "to": 2 },
-  { "id": "ctl/add-out", "expr": "n(\"0 2 4\").add.out(\"<0 3>*2\")", "to": 2 },
-  { "id": "ctl/add-mix", "expr": "n(\"0 2 4\").add.mix(\"0 3\")", "to": 1 },
-  { "id": "ctl/add-squeeze", "expr": "n(\"0 2\").add.squeeze(\"0 3\")", "to": 1 },
-  { "id": "ctl/sub", "expr": "n(\"0 2 4\").sub(1)", "to": 1 },
-  { "id": "ctl/mul", "expr": "n(\"1 2 3\").mul(2)", "to": 1 },
-  { "id": "ctl/union", "expr": "s(\"bd sd\").gain(0.5).lpf(400)", "to": 1 },
-  { "id": "ctl/gain-pat", "expr": "s(\"hh*4\").gain(\"0.1 0.2 0.3 0.4\")", "to": 1 },
-  { "id": "ctl/pan-sig", "expr": "s(\"hh*8\").pan(sine.range(0.32, 0.68))", "to": 1 },
-
-  { "id": "tonal/note-names", "expr": "note(\"c3 e3 g3\")", "to": 1 },
-  { "id": "tonal/note-add", "expr": "note(\"c3 e3 g3\").add(note(7))", "to": 1 },
-  { "id": "tonal/scale", "expr": "n(\"0 1 2 3 4 5 6 7\").scale(\"C:major\")", "to": 1 },
-  { "id": "tonal/scale-minor", "expr": "n(\"0 2 4\").scale(\"A4:minor\")", "to": 1 },
-  { "id": "tonal/chord-voicing", "expr": "n(\"0 2 4\").set(chord(\"<C^7 Am7>\")).mode(\"root:c2\").voicing()", "to": 2 },
-  { "id": "tonal/chord-above", "expr": "n(\"0 1 2\").set(chord(\"<C^7 Am7>\")).mode(\"above:c4\").voicing()", "to": 2 },
-  { "id": "tonal/circle-root", "expr": "n(\"0\").set(chord(\"<C^7 Am7 F^7 G7 Dm7 G7 Em7 Am7>\")).mode(\"root:c2\").voicing()", "to": 8 },
-  { "id": "tonal/circle-above", "expr": "n(\"0 1 2\").set(chord(\"<C^7 Am7 F^7 G7 Dm7 G7 Em7 Am7>\")).mode(\"above:c4\").voicing()", "to": 8 },
-  { "id": "tonal/rootNotes", "expr": "chord(\"<C^7 Am7>\").rootNotes(2).note()", "to": 2 },
-  { "id": "tonal/transpose", "expr": "note(\"c3 e3\").transpose(5)", "to": 1 },
-  { "id": "tonal/arp", "expr": "note(\"<[c,eb,g]!2 [c,f,ab]>\").arp(\"0 [0,2] 1\")", "to": 2 },
-
-  { "id": "edge/empty", "expr": "s(\"\")", "to": 1 },
-  { "id": "edge/only-rest", "expr": "s(\"~\")", "to": 1 },
-  { "id": "edge/silence", "expr": "silence", "to": 1 },
-  { "id": "edge/gain-zero", "expr": "s(\"bd\").gain(0)", "to": 1 },
-  { "id": "edge/gain-neg", "expr": "s(\"bd\").gain(-1)", "to": 1 },
-  { "id": "edge/fast-zero", "expr": "s(\"bd sd\").fast(0)", "to": 1 },
-  { "id": "edge/deep-nest", "expr": "s(\"[[[[bd sd] hh] cp] bd]\")", "to": 1 },
-  { "id": "edge/negative-cycle", "expr": "s(\"bd sd\")", "from": -2, "to": 0 },
-  { "id": "edge/fractional-window", "expr": "s(\"bd*4\")", "from": 0.3, "to": 0.8 },
-  { "id": "edge/long-window", "expr": "s(\"<bd sd hh cp>\")", "to": 16 }
+ {
+  "id": "mini/plain",
+  "expr": "s(\"bd sd\")",
+  "to": 1
+ },
+ {
+  "id": "mini/rest",
+  "expr": "s(\"bd ~ sd ~\")",
+  "to": 1
+ },
+ {
+  "id": "mini/dash-rest",
+  "expr": "s(\"bd - sd -\")",
+  "to": 1
+ },
+ {
+  "id": "mini/group",
+  "expr": "s(\"bd [sd sd] hh\")",
+  "to": 1
+ },
+ {
+  "id": "mini/nested",
+  "expr": "s(\"[bd [sd [hh cp]]] bd\")",
+  "to": 1
+ },
+ {
+  "id": "mini/fast",
+  "expr": "s(\"bd sd*2 ~ hh\")",
+  "to": 1
+ },
+ {
+  "id": "mini/fast-group",
+  "expr": "s(\"[bd sd]*3\")",
+  "to": 1
+ },
+ {
+  "id": "mini/slow",
+  "expr": "s(\"bd/2 sd\")",
+  "to": 4
+ },
+ {
+  "id": "mini/replicate",
+  "expr": "s(\"bd!3 sd\")",
+  "to": 1
+ },
+ {
+  "id": "mini/replicate-bang",
+  "expr": "s(\"bd!! sd\")",
+  "to": 1
+ },
+ {
+  "id": "mini/weight",
+  "expr": "s(\"bd@3 sd\")",
+  "to": 1
+ },
+ {
+  "id": "mini/weight-underscore",
+  "expr": "s(\"bd _ _ sd\")",
+  "to": 1
+ },
+ {
+  "id": "mini/index",
+  "expr": "s(\"bd:3 sd:1\")",
+  "to": 1
+ },
+ {
+  "id": "mini/alt",
+  "expr": "s(\"<bd sd hh>\")",
+  "to": 3
+ },
+ {
+  "id": "mini/alt-in-seq",
+  "expr": "s(\"<bd sd> hh\")",
+  "to": 2
+ },
+ {
+  "id": "mini/stack-comma",
+  "expr": "s(\"bd*2, hh*3\")",
+  "to": 1
+ },
+ {
+  "id": "mini/polymeter",
+  "expr": "s(\"{bd sd, hh hh hh}\")",
+  "to": 2
+ },
+ {
+  "id": "mini/polymeter-steps",
+  "expr": "s(\"{bd sd, hh hh hh}%4\")",
+  "to": 2
+ },
+ {
+  "id": "mini/euclid",
+  "expr": "s(\"bd(3,8)\")",
+  "to": 1
+ },
+ {
+  "id": "mini/euclid-rot",
+  "expr": "s(\"bd(3,8,2)\")",
+  "to": 1
+ },
+ {
+  "id": "mini/euclid-neg",
+  "expr": "s(\"bd(-3,8)\")",
+  "to": 1
+ },
+ {
+  "id": "mini/feet",
+  "expr": "s(\"bd sd . hh hh hh\")",
+  "to": 1
+ },
+ {
+  "id": "mini/range",
+  "expr": "n(\"0 .. 3\")",
+  "to": 1
+ },
+ {
+  "id": "mini/complex",
+  "expr": "s(\"<[bd(3,8,2) ~]!2 [sd:1@3 hh*4]>, ~ cp\")",
+  "to": 4
+ },
+ {
+  "id": "comb/stack",
+  "expr": "stack(s(\"bd*2\"), s(\"hh*3\"))",
+  "to": 1
+ },
+ {
+  "id": "comb/cat",
+  "expr": "cat(s(\"bd\"), s(\"sd\"), s(\"hh\"))",
+  "to": 3
+ },
+ {
+  "id": "comb/fastcat",
+  "expr": "fastcat(s(\"bd\"), s(\"sd\"), s(\"hh\"))",
+  "to": 1
+ },
+ {
+  "id": "comb/timecat",
+  "expr": "timeCat([3, s(\"bd\")], [1, s(\"sd\")])",
+  "to": 1
+ },
+ {
+  "id": "comb/arrange",
+  "expr": "arrange([2, s(\"bd*2\")], [1, s(\"sd*3\")])",
+  "to": 3
+ },
+ {
+  "id": "comb/superimpose",
+  "expr": "s(\"bd sd\").superimpose(x => x.fast(2))",
+  "to": 1
+ },
+ {
+  "id": "comb/layer",
+  "expr": "n(\"0 2\").layer(x => x.add(3), x => x.add(7))",
+  "to": 1
+ },
+ {
+  "id": "time/fast",
+  "expr": "s(\"bd sd\").fast(2)",
+  "to": 1
+ },
+ {
+  "id": "time/slow",
+  "expr": "s(\"bd sd\").slow(2)",
+  "to": 2
+ },
+ {
+  "id": "time/fast-pat",
+  "expr": "s(\"bd sd\").fast(\"<1 2 3>\")",
+  "to": 3
+ },
+ {
+  "id": "time/early",
+  "expr": "s(\"bd sd\").early(0.25)",
+  "to": 1
+ },
+ {
+  "id": "time/late",
+  "expr": "s(\"bd sd\").late(0.25)",
+  "to": 1
+ },
+ {
+  "id": "time/rev",
+  "expr": "s(\"bd sd hh cp\").rev()",
+  "to": 1
+ },
+ {
+  "id": "time/iter4",
+  "expr": "n(\"0 1 2 3\").iter(4)",
+  "to": 4
+ },
+ {
+  "id": "time/iterback",
+  "expr": "n(\"0 1 2 3\").iterBack(4)",
+  "to": 4
+ },
+ {
+  "id": "time/ply3",
+  "expr": "s(\"bd ~ sd cp\").ply(3)",
+  "to": 1
+ },
+ {
+  "id": "time/off",
+  "expr": "n(\"0 3\").off(0.125, x => x.add(7))",
+  "to": 1
+ },
+ {
+  "id": "time/jux-rev",
+  "expr": "s(\"bd sd hh\").jux(rev)",
+  "to": 1
+ },
+ {
+  "id": "time/juxby",
+  "expr": "s(\"bd sd\").juxBy(0.5, rev)",
+  "to": 1
+ },
+ {
+  "id": "time/struct",
+  "expr": "n(\"0\").struct(\"x ~ x x ~ x ~ ~\")",
+  "to": 1
+ },
+ {
+  "id": "time/mask",
+  "expr": "n(\"0 1 2 3\").mask(\"1 0 1 1\")",
+  "to": 1
+ },
+ {
+  "id": "time/segment",
+  "expr": "saw.segment(8)",
+  "to": 1
+ },
+ {
+  "id": "time/swingby",
+  "expr": "s(\"hh*8\").swingBy(0.23, 4)",
+  "to": 1
+ },
+ {
+  "id": "time/swing",
+  "expr": "s(\"hh*8\").swing(4)",
+  "to": 1
+ },
+ {
+  "id": "time/striate",
+  "expr": "s(\"bd sd\").striate(3)",
+  "to": 1
+ },
+ {
+  "id": "time/chop",
+  "expr": "s(\"bd sd\").chop(2)",
+  "to": 1
+ },
+ {
+  "id": "time/compress",
+  "expr": "s(\"bd sd\").compress(0.25, 0.75)",
+  "to": 1
+ },
+ {
+  "id": "time/zoom",
+  "expr": "s(\"bd sd hh cp\").zoom(0.25, 0.75)",
+  "to": 1
+ },
+ {
+  "id": "time/every",
+  "expr": "n(\"0 1\").every(3, x => x.rev())",
+  "to": 3
+ },
+ {
+  "id": "time/palindrome",
+  "expr": "n(\"0 1 2\").palindrome()",
+  "to": 2
+ },
+ {
+  "id": "time/press",
+  "expr": "s(\"bd sd\").press()",
+  "to": 1
+ },
+ {
+  "id": "time/linger",
+  "expr": "s(\"bd sd hh cp\").linger(0.5)",
+  "to": 1
+ },
+ {
+  "id": "time/echo",
+  "expr": "s(\"bd\").echo(3, 0.125, 0.5)",
+  "to": 1
+ },
+ {
+  "id": "time/repeatCycles",
+  "expr": "n(\"<0 1 2>\").repeatCycles(2)",
+  "to": 4
+ },
+ {
+  "id": "time/chunk",
+  "expr": "n(\"0 1 2 3\").chunk(4, x => x.add(10))",
+  "to": 4
+ },
+ {
+  "id": "time/inside",
+  "expr": "n(\"0 1 2 3\").inside(2, rev)",
+  "to": 2
+ },
+ {
+  "id": "time/ribbon",
+  "expr": "n(\"<0 1 2 3>\").ribbon(1, 2)",
+  "to": 4
+ },
+ {
+  "id": "sig/sine-seg",
+  "expr": "sine.segment(8)",
+  "to": 1
+ },
+ {
+  "id": "sig/cosine-seg",
+  "expr": "cosine.segment(8)",
+  "to": 1
+ },
+ {
+  "id": "sig/saw-seg",
+  "expr": "saw.segment(8)",
+  "to": 1
+ },
+ {
+  "id": "sig/isaw-seg",
+  "expr": "isaw.segment(8)",
+  "to": 1
+ },
+ {
+  "id": "sig/tri-seg",
+  "expr": "tri.segment(8)",
+  "to": 1
+ },
+ {
+  "id": "sig/square-seg",
+  "expr": "square.segment(8)",
+  "to": 1
+ },
+ {
+  "id": "sig/sine-range",
+  "expr": "sine.range(100, 200).segment(4)",
+  "to": 2
+ },
+ {
+  "id": "sig/sine-slow",
+  "expr": "sine.slow(4).segment(4)",
+  "to": 4
+ },
+ {
+  "id": "sig/rand-seg",
+  "expr": "rand.segment(8)",
+  "to": 2
+ },
+ {
+  "id": "sig/irand-seg",
+  "expr": "irand(8).segment(8)",
+  "to": 2
+ },
+ {
+  "id": "sig/perlin-seg",
+  "expr": "perlin.segment(8)",
+  "to": 2
+ },
+ {
+  "id": "sig/perlin-range",
+  "expr": "perlin.range(0.97, 1.05).segment(8)",
+  "to": 2
+ },
+ {
+  "id": "sig/run",
+  "expr": "run(4)",
+  "to": 1
+ },
+ {
+  "id": "rand/degradeBy",
+  "expr": "s(\"hh*8\").degradeBy(0.25)",
+  "to": 4
+ },
+ {
+  "id": "rand/degrade",
+  "expr": "s(\"hh*8\").degrade()",
+  "to": 4
+ },
+ {
+  "id": "rand/undegradeBy",
+  "expr": "s(\"hh*8\").undegradeBy(0.25)",
+  "to": 4
+ },
+ {
+  "id": "rand/question",
+  "expr": "s(\"hh*8?\")",
+  "to": 4
+ },
+ {
+  "id": "rand/question-amt",
+  "expr": "s(\"hh*8?0.3\")",
+  "to": 4
+ },
+ {
+  "id": "rand/two-questions",
+  "expr": "s(\"bd*4? sd*4?\")",
+  "to": 4
+ },
+ {
+  "id": "rand/sometimesBy",
+  "expr": "n(\"0*8\").sometimesBy(0.4, x => x.add(12))",
+  "to": 2
+ },
+ {
+  "id": "rand/choose-pipe",
+  "expr": "s(\"bd | sd | hh\")",
+  "to": 8
+ },
+ {
+  "id": "rand/shuffle",
+  "expr": "n(\"0 1 2 3\").shuffle(4)",
+  "to": 4
+ },
+ {
+  "id": "rand/scramble",
+  "expr": "n(\"0 1 2 3\").scramble(4)",
+  "to": 4
+ },
+ {
+  "id": "rand/seed",
+  "expr": "s(\"hh*8\").degradeBy(0.5).seed(1)",
+  "to": 2
+ },
+ {
+  "id": "ctl/set",
+  "expr": "note(\"c a f e\").s(\"sine\").set(s(\"triangle\"))",
+  "to": 1
+ },
+ {
+  "id": "ctl/add",
+  "expr": "n(\"0 2 4\").add(\"<0 3>\")",
+  "to": 2
+ },
+ {
+  "id": "ctl/add-out",
+  "expr": "n(\"0 2 4\").add.out(\"<0 3>*2\")",
+  "to": 2
+ },
+ {
+  "id": "ctl/add-mix",
+  "expr": "n(\"0 2 4\").add.mix(\"0 3\")",
+  "to": 1
+ },
+ {
+  "id": "ctl/add-squeeze",
+  "expr": "n(\"0 2\").add.squeeze(\"0 3\")",
+  "to": 1
+ },
+ {
+  "id": "ctl/sub",
+  "expr": "n(\"0 2 4\").sub(1)",
+  "to": 1
+ },
+ {
+  "id": "ctl/mul",
+  "expr": "n(\"1 2 3\").mul(2)",
+  "to": 1
+ },
+ {
+  "id": "ctl/union",
+  "expr": "s(\"bd sd\").gain(0.5).lpf(400)",
+  "to": 1
+ },
+ {
+  "id": "ctl/gain-pat",
+  "expr": "s(\"hh*4\").gain(\"0.1 0.2 0.3 0.4\")",
+  "to": 1
+ },
+ {
+  "id": "ctl/pan-sig",
+  "expr": "s(\"hh*8\").pan(sine.range(0.32, 0.68))",
+  "to": 1
+ },
+ {
+  "id": "tonal/note-names",
+  "expr": "note(\"c3 e3 g3\")",
+  "to": 1
+ },
+ {
+  "id": "tonal/note-add",
+  "expr": "note(\"c3 e3 g3\").add(note(7))",
+  "to": 1
+ },
+ {
+  "id": "tonal/scale",
+  "expr": "n(\"0 1 2 3 4 5 6 7\").scale(\"C:major\")",
+  "to": 1
+ },
+ {
+  "id": "tonal/scale-minor",
+  "expr": "n(\"0 2 4\").scale(\"A4:minor\")",
+  "to": 1
+ },
+ {
+  "id": "tonal/chord-voicing",
+  "expr": "n(\"0 2 4\").set(chord(\"<C^7 Am7>\")).mode(\"root:c2\").voicing()",
+  "to": 2
+ },
+ {
+  "id": "tonal/chord-above",
+  "expr": "n(\"0 1 2\").set(chord(\"<C^7 Am7>\")).mode(\"above:c4\").voicing()",
+  "to": 2
+ },
+ {
+  "id": "tonal/circle-root",
+  "expr": "n(\"0\").set(chord(\"<C^7 Am7 F^7 G7 Dm7 G7 Em7 Am7>\")).mode(\"root:c2\").voicing()",
+  "to": 8
+ },
+ {
+  "id": "tonal/circle-above",
+  "expr": "n(\"0 1 2\").set(chord(\"<C^7 Am7 F^7 G7 Dm7 G7 Em7 Am7>\")).mode(\"above:c4\").voicing()",
+  "to": 8
+ },
+ {
+  "id": "tonal/rootNotes",
+  "expr": "chord(\"<C^7 Am7>\").rootNotes(2).note()",
+  "to": 2
+ },
+ {
+  "id": "tonal/transpose",
+  "expr": "note(\"c3 e3\").transpose(5)",
+  "to": 1
+ },
+ {
+  "id": "tonal/arp",
+  "expr": "note(\"<[c,eb,g]!2 [c,f,ab]>\").arp(\"0 [0,2] 1\")",
+  "to": 2
+ },
+ {
+  "id": "edge/empty",
+  "expr": "s(\"\")",
+  "to": 1
+ },
+ {
+  "id": "edge/only-rest",
+  "expr": "s(\"~\")",
+  "to": 1
+ },
+ {
+  "id": "edge/silence",
+  "expr": "silence",
+  "to": 1
+ },
+ {
+  "id": "edge/gain-zero",
+  "expr": "s(\"bd\").gain(0)",
+  "to": 1
+ },
+ {
+  "id": "edge/gain-neg",
+  "expr": "s(\"bd\").gain(-1)",
+  "to": 1
+ },
+ {
+  "id": "edge/fast-zero",
+  "expr": "s(\"bd sd\").fast(0)",
+  "to": 1
+ },
+ {
+  "id": "edge/deep-nest",
+  "expr": "s(\"[[[[bd sd] hh] cp] bd]\")",
+  "to": 1
+ },
+ {
+  "id": "edge/negative-cycle",
+  "expr": "s(\"bd sd\")",
+  "from": -2,
+  "to": 0
+ },
+ {
+  "id": "edge/fractional-window",
+  "expr": "s(\"bd*4\")",
+  "from": 0.3,
+  "to": 0.8
+ },
+ {
+  "id": "edge/long-window",
+  "expr": "s(\"<bd sd hh cp>\")",
+  "to": 16
+ },
+ {
+  "id": "berlin",
+  "expr": "berlin.segment(4)",
+  "to": 4
+ },
+ {
+  "id": "binary",
+  "expr": "\"hh\".s().struct(binary(5))",
+  "to": 4
+ },
+ {
+  "id": "binaryN",
+  "expr": "\"hh\".s().struct(binaryN(11,4))",
+  "to": 4
+ },
+ {
+  "id": "binaryL",
+  "expr": "s(\"saw\").seg(2).partials(binaryL(11))",
+  "to": 4
+ },
+ {
+  "id": "randL",
+  "expr": "s(\"saw\").seg(2).partials(randL(3))",
+  "to": 4
+ },
+ {
+  "id": "randrun",
+  "expr": "n(randrun(4)).s(\"saw\")",
+  "to": 4
+ },
+ {
+  "id": "wchoose",
+  "expr": "note(\"c2 g2\").s(wchoose([\"sine\",10],[\"triangle\",1]))",
+  "to": 4
+ },
+ {
+  "id": "wchooseCycles",
+  "expr": "wchooseCycles([\"bd\",10],[\"hh\",1]).s().fast(4)",
+  "to": 4
+ },
+ {
+  "id": "take",
+  "expr": "\"bd cp ht mt\".take(\"1 2 3\").sound()",
+  "to": 4
+ },
+ {
+  "id": "drop",
+  "expr": "\"bd cp ht mt\".drop(\"0 1 2\").sound()",
+  "to": 4
+ },
+ {
+  "id": "grow",
+  "expr": "\"bd cp ht mt\".grow(\"1\").sound()",
+  "to": 4
+ },
+ {
+  "id": "shrink",
+  "expr": "\"bd cp ht mt\".shrink(\"1\").sound()",
+  "to": 4
+ },
+ {
+  "id": "zip",
+  "expr": "zip(\"e f\", \"e f g\").note()",
+  "to": 4
+ },
+ {
+  "id": "tour",
+  "expr": "\"[c g]\".tour(\"e f\", \"e f g\").note()",
+  "to": 4
+ },
+ {
+  "id": "pick",
+  "expr": "n(\"<0 1 2>\".pick([\"g a\", \"e f\", \"f g\"])).s(\"saw\")",
+  "to": 4
+ },
+ {
+  "id": "pickmod",
+  "expr": "n(\"<0 1 5>\".pickmod([\"g a\", \"e f\", \"f g\"])).s(\"saw\")",
+  "to": 4
+ },
+ {
+  "id": "inhabit",
+  "expr": "s(\"<a b [a,b]>\".inhabit({a: \"bd(3,8)\", b: \"sd sd\"}))",
+  "to": 4
+ },
+ {
+  "id": "chunkInto",
+  "expr": "sound(\"bd sd ht lt\").chunkInto(4, hurry(2))",
+  "to": 4
+ },
+ {
+  "id": "plyWith",
+  "expr": "\"<0 [2 4]>\".plyWith(4, (p) => p.add(2)).scale(\"C:minor\").note()",
+  "to": 4
+ },
+ {
+  "id": "juxFlip",
+  "expr": "s(\"bd lt [~ ht] mt\").juxFlip(rev)",
+  "to": 4
+ },
+ {
+  "id": "beat",
+  "expr": "s(\"bd\").beat(\"0,7,10\", 16)",
+  "to": 4
+ },
+ {
+  "id": "bypass",
+  "expr": "s(\"bd sd\").bypass(\"<0 1>\")",
+  "to": 4
+ },
+ {
+  "id": "euclidish",
+  "expr": "sound(\"hh\").euclidish(3,8,0.5)",
+  "to": 4
+ },
+ {
+  "id": "bjork",
+  "expr": "sound(\"hh\").bjork([3,8,1])",
+  "to": 4
+ },
+ {
+  "id": "adsr",
+  "expr": "note(\"c3\").adsr(\"0.1:0.1:0.5:0.2\")",
+  "to": 4
+ },
+ {
+  "id": "as_control",
+  "expr": "\"c:.5 a:1\".as(\"note:clip\")",
+  "to": 4
+ },
+ {
+  "id": "lfo",
+  "expr": "s(\"saw\").lpf(500).lfo({ r: 2 })",
+  "to": 4
+ },
+ {
+  "id": "arpWith",
+  "expr": "note(\"<[c,eb,g] [c,f,ab]>\").arpWith(haps => haps[1])",
+  "to": 4
+ }
 ]

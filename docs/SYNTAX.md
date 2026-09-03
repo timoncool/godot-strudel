@@ -26,7 +26,7 @@
 | `Math.pow`, `Math.floor`, `Math.min`… | есть |
 | `// строчный` и `/* блочный */` комментарии | есть |
 | `setcpm(…)`, `setcps(…)` | есть |
-| шаблонные строки с `${…}` | **нет** — ошибка с местом |
+| шаблонные строки с `${…}` | есть: вставки считаются ДО mini-нотации |
 | `import`, `for`, `if`, `function`, классы | **нет** — в паттернах Strudel не встречаются |
 
 Ошибка разбора всегда несёт **строку и место**, а не молчание:
@@ -84,8 +84,11 @@ Strudel: в строке "bd [sd": не закрыта скобка "[" (поз�
 | `swingBy`, `swing` | есть |
 | `repeatCycles`, `ribbon`, `rib` | есть |
 | `pace`, `steps`, `expand`, `contract`, `extend` | есть |
-| `slice`, `splice`, `fit`, `loopAt`, `bite` | **нет** |
-| `take`, `drop`, `grow`, `shrink`, `tour`, `zip` | **нет** |
+| `slice`, `splice`, `fit`, `loopAt`, `bite` | есть |
+| `take`, `drop`, `grow`, `shrink`, `tour`, `zip`, `stepJoin` | есть |
+| `pick`, `pickmod`, `pickOut`, `pickRestart`, `pickReset`, `inhabit`, `pickF` | есть |
+| `chunkInto`, `chunkBackInto`, `fastChunk`, `slowChunk`, `into`, `unjoin` | есть |
+| `plyWith`, `plyForEach`, `juxFlip`, `juxFlipBy`, `echoWith`, `collect` | есть |
 
 Все аргументы **патернифицированы**, как в оригинале: `fast("<1 2 3>")`
 работает, скорость меняется по циклам.
@@ -105,8 +108,9 @@ Strudel: в строке "bd [sd": не закрыта скобка "[" (поз�
 | `degradeBy`, `degrade`, `undegradeBy`, `undegrade` | есть |
 | `sometimesBy`, `sometimes`, `often`, `rarely`, `almostNever`, `almostAlways` | есть |
 | `someCyclesBy`, `someCycles`, `shuffle`, `scramble`, `seed` | есть |
-| `berlin`, `wchoose`, `randL`, `binary` | **нет** |
-| `useRNG('precise')` | **нет** — работает режим `legacy`, он же по умолчанию |
+| `berlin`, `wchoose`, `wchooseCycles`, `randL`, `randrun` | есть |
+| `binary`, `binaryN`, `binaryL`, `binaryNL` | есть |
+| `useRNG('precise')` | есть; по умолчанию, как и в Strudel, `legacy` |
 
 ---
 
@@ -123,7 +127,8 @@ Strudel: в строке "bd [sd": не закрыта скобка "[" (поз�
 | `scale("C:major")` | есть, 92 лада из @tonaljs |
 | `transpose(5)` | есть, имена нот сохраняются (`c3` + 5 = `F3`) |
 | `arp("0 1")`, `arpWith` | есть |
-| `scaleTranspose`, `voicings('lefthand')` | **нет** |
+| `scaleTranspose`, `voicings`, `chord`, `voicing` | есть |
+| словари раскладок `ireal`, `ireal-ext`, `lefthand`, `guidetones`, `triads`, `legacy` | есть |
 
 Раскладки и лады **порождены из исходников Булки** (`tools/gen_voicings.py`,
 `tools/gen_scales.py`), а не переписаны руками.
@@ -136,13 +141,16 @@ Strudel: в строке "bd [sd": не закрыта скобка "[" (поз�
 
 | что | состояние |
 |---|---|
-| `sine`, `sawtooth`, `square`, `triangle` | есть; пила и меандр — с PolyBLEP |
+| `sine`, `sawtooth`, `square`, `triangle` | есть, **ограниченные по полосе**, как в WebAudio |
 | `white`, `pink`, `brown` | есть |
-| сэмплы из папки пользователя | есть, **только WAV** (8 и 16 бит) |
+| сэмплы из папки пользователя | есть: WAV (8 и 16 бит), ogg, mp3 |
 | карты формата Strudel (`_base`, списки, многосэмплированные) | есть |
 | `:n` — индекс, `.bank("…")` — набор | есть |
 | саундфонты `sf:банк:программа` | есть, `.sf2`, загрузка ленивая |
-| FM, супер-пила, вейвтейблы, `partials` | **нет** |
+| FM — полная матрица восьми голосов (`fmi`, `fmh`, `fmwave`, `fmenv`, огибающие) | есть, сверено 0.00 дБ |
+| `supersaw` (`unison`, `detune`, `spread`) | есть |
+| своя волна: `partials`, `phases` | есть, сверено 0.00 дБ |
+| огибающая высоты (`penv`, `pattack`…, `panchor`) и вибрато (`vib`, `vibmod`) | есть |
 
 **Пустой банк — штатное состояние.** Если сэмплов нет, всё играет синтезом,
 а в лог уходит понятное предупреждение.
@@ -160,11 +168,15 @@ Strudel: в строке "bd [sd": не закрыта скобка "[" (поз�
 | `vowel` | есть, все 15 гласных плюс диакритика |
 | `crush`, `coarse`, `shape` | есть, сверено 0.00 дБ |
 | `speed` | есть |
-| `room` | есть, **другой алгоритм** (Шрёдер вместо свёртки) |
-| `delay`, `delaytime`, `delayfeedback` | есть, общая линия |
-| `orbit` | значение принимается, но отдельных шин по орбитам нет |
-| `distort`, `tremolo`, `compressor`, `phaser` | **нет** |
-| огибающие фильтров (`lpenv`, `lpattack`…) | **нет** |
+| `room`, `roomsize`, `roomfade`, `roomlp`, `roomdim` | есть, **другое устройство хвоста** (Шрёдер вместо свёртки) |
+| `delay`, `delaytime`, `delaysync`, `delayfeedback` | есть, линия **на орбиту** |
+| `orbit` | есть: у каждой орбиты свои эхо и зал |
+| `distort` со всеми девятью кривыми, `distortvol`, `distorttype` | есть, сверено 0.00 дБ |
+| `tremolo`, `tremolosync`, `tremolodepth`, `tremoloskew`, `tremoloshape` | есть |
+| `compressor` и его настройки | есть, уровень сверен |
+| `phaser`, `phaserdepth`, `phasercenter`, `phasersweep` | есть |
+| огибающие фильтров (`lpenv`, `lpattack`…, `fanchor`) для НЧ, ВЧ и полосового | есть, сверено 0.00 дБ |
+| модуляция `lfo`, `env`, `bmod` | описание кладётся в событие |
 
 Порядок цепи — тот же, что в `superdough`; подробности и числа в
 [COMPARISON.md](COMPARISON.md).
