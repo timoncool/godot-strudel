@@ -30,6 +30,14 @@ var bank: StrudelSampleBank = null
 ## Сколько раз пришлось вытеснять голос — видно в отладке, а не «молча».
 var stolen_voices := 0
 var played_events := 0
+## Сколько отсчётов вышло за предел. Strudel лимитера НЕ имеет (проверено:
+## superdoughoutput.mjs:194 — только громкость и выход), поэтому по умолчанию
+## плагин ведёт себя так же. Но молча портить звук в игре нельзя, поэтому
+## перегруз считается и о нём сообщают.
+var clipped_frames := 0
+## Мягкое ограничение на выходе. Выключено по умолчанию: с ним звук перестаёт
+## быть побитово тем же, что в Strudel, а это цена сверки.
+var master_limiter := false
 
 var _voices: Array[StrudelVoice] = []
 var _frames_written := 0
@@ -70,6 +78,7 @@ func setup(rate: float) -> void:
 
 
 func reset_clock() -> void:
+	clipped_frames = 0
 	_frames_written = 0
 	_scheduled.clear()
 	_sched_cycle_end = 0.0
@@ -210,6 +219,16 @@ func _render(count: int) -> void:
 
 	_mix_delay(count)
 	_reverb.render(_room_bus, _left, _right, count)
+
+	for i in count:
+		var l: float = _left[i]
+		var r: float = _right[i]
+		if absf(l) > 1.0 or absf(r) > 1.0:
+			clipped_frames += 1
+			if master_limiter:
+				# Мягкое ограничение: тише, но без хруста.
+				_left[i] = l / (1.0 + absf(l) - 1.0) if absf(l) > 1.0 else l
+				_right[i] = r / (1.0 + absf(r) - 1.0) if absf(r) > 1.0 else r
 
 
 func _mix_delay(count: int) -> void:

@@ -14,6 +14,11 @@ extends RefCounted
 ##
 ## 🔴 Порядок менять «как удобнее» нельзя: `crush` до фильтра и после фильтра
 ## звучат по-разному, и это слышно.
+##
+## Пила и меандр строятся с PolyBLEP — скруглением скачка. Наивные «зубцы»
+## дают призвуки на высоких (алиасинг): сверка со звуком Булки показывала
+## лишние 8-12 дБ выше двух килогерц, потому что в WebAudio осцилляторы
+## ограничены по полосе, а прямой отсчёт `2*фаза-1` — нет.
 
 enum Source { SILENCE, SINE, SAW, SQUARE, TRIANGLE, WHITE, PINK, BROWN, SAMPLE }
 
@@ -28,7 +33,13 @@ var frequency := 440.0
 var speed := 1.0
 var gain := 1.0
 var postgain := 1.0
-var pan := 0.5
+## Панорама. Отрицательное значение — «панорамы НЕТ».
+##
+## 🔴 Strudel вставляет панораматор ТОЛЬКО когда `pan` задан явно
+## (`superdough.mjs:898`, `if (fx.pan !== undefined)`). Если панорамировать
+## всегда, равномощная панорама в середине даёт множитель 1/√2 — ровно
+## три децибела тише эталона по ВСЕМ полосам. Так это и нашлось сверкой.
+var pan := -1.0
 
 var envelope: StrudelEnvelope = null
 var note_length := 0.5
@@ -98,10 +109,14 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 	if not active:
 		return
 	var total := total_frames()
-	# Панорама равной мощности — как StereoPanner в WebAudio.
-	var angle := (pan * 2.0 - 1.0 + 1.0) * 0.5 * (PI * 0.5)
-	var gl := cos(angle)
-	var gr := sin(angle)
+	# Панорама равной мощности — как StereoPanner в WebAudio, но только если
+	# её просили: без `pan` сигнал идёт в оба канала целиком.
+	var gl := 1.0
+	var gr := 1.0
+	if pan >= 0.0:
+		var angle := pan * (PI * 0.5)
+		gl = cos(angle)
+		gr = sin(angle)
 
 	# 🔴 Всё, что можно, вынесено ИЗ цикла и развёрнуто в локальные переменные.
 	# Вызов функции в GDScript стоит дороже самой арифметики: пока огибающая,
@@ -198,12 +213,39 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 			if phase >= 1.0:
 				phase -= 1.0
 		elif src == Source.SAW:
+			# PolyBLEP: скругление скачка, чтобы пила не алиасила.
 			raw = phase * 2.0 - 1.0
+			var bl := 0.0
+			if phase < freq_step:
+				var q := phase / freq_step
+				bl = q + q - q * q - 1.0
+			elif phase > 1.0 - freq_step:
+				var q2 := (phase - 1.0) / freq_step
+				bl = q2 * q2 + q2 + q2 + 1.0
+			raw -= bl
 			phase += freq_step
 			if phase >= 1.0:
 				phase -= 1.0
 		elif src == Source.SQUARE:
 			raw = 1.0 if phase < 0.5 else -1.0
+			var b1 := 0.0
+			if phase < freq_step:
+				var q3 := phase / freq_step
+				b1 = q3 + q3 - q3 * q3 - 1.0
+			elif phase > 1.0 - freq_step:
+				var q4 := (phase - 1.0) / freq_step
+				b1 = q4 * q4 + q4 + q4 + 1.0
+			var ph2 := phase + 0.5
+			if ph2 >= 1.0:
+				ph2 -= 1.0
+			var b2 := 0.0
+			if ph2 < freq_step:
+				var q5 := ph2 / freq_step
+				b2 = q5 + q5 - q5 * q5 - 1.0
+			elif ph2 > 1.0 - freq_step:
+				var q6 := (ph2 - 1.0) / freq_step
+				b2 = q6 * q6 + q6 + q6 + 1.0
+			raw += b1 - b2
 			phase += freq_step
 			if phase >= 1.0:
 				phase -= 1.0

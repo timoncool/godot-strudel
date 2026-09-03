@@ -73,12 +73,24 @@ signal voices_exhausted(total_stolen: int, limit: int)
 ## этом сообщает сигнал — молчаливой кражи нот здесь нет.
 @export_range(1, 256, 1) var max_voices := 64
 
+## Мягкое ограничение на выходе.
+##
+## Выключено по умолчанию, потому что в самом Strudel лимитера нет и звук с ним
+## перестаёт быть побитово тем же. Если в логе появилось предупреждение о
+## перегрузе — включите его либо убавьте [member volume_db].
+@export var master_limiter := false:
+	set(value):
+		master_limiter = value
+		if _engine != null:
+			_engine.master_limiter = value
+
 var _player: AudioStreamPlayer = null
 var _engine: StrudelEngine = null
 var _bank: StrudelSampleBank = null
 var _playing := false
 var _cps_from_code := false
 var _last_error := ""
+var _warned_clip := false
 
 
 func _ready() -> void:
@@ -93,6 +105,7 @@ func _build() -> void:
 	_engine = StrudelEngine.new()
 	_engine.max_voices = max_voices
 	_engine.lookahead = lookahead
+	_engine.master_limiter = master_limiter
 	_engine.event_started.connect(func(value, _delay): event_played.emit(value))
 	_engine.voices_exhausted.connect(func(total, limit): voices_exhausted.emit(total, limit))
 
@@ -185,6 +198,7 @@ func stats() -> Dictionary:
 		"цикл": _engine.current_cycle(),
 		"циклов_в_секунду": _engine.cps,
 		"сэмплов_в_банке": _bank.count() if _bank != null else 0,
+		"перегружено_отсчётов": _engine.clipped_frames,
 	}
 
 
@@ -226,3 +240,8 @@ func _process(_delta: float) -> void:
 	var playback := _player.get_stream_playback()
 	if playback is AudioStreamGeneratorPlayback:
 		_engine.fill(playback)
+	# О перегрузе говорим ОДИН раз: иначе лог зальёт.
+	if not _warned_clip and _engine.clipped_frames > int(_engine.mix_rate * 0.05):
+		_warned_clip = true
+		push_warning("Strudel: выход перегружен (%d отсчётов). Убавь volume_db или включи master_limiter."
+			% _engine.clipped_frames)

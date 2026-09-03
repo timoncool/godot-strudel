@@ -21,9 +21,20 @@ var sustain := ENV_MAX
 var release := RELEASE_MIN
 
 
-static func from_values(a: Variant, d: Variant, s: Variant, r: Variant) -> StrudelEnvelope:
+## Умолчания СИНТЕЗА — свои (`synth.mjs:48`): нота сама подсаживается до 0.6
+## за пятьдесят миллисекунд. У сэмплера умолчания общие.
+const SYNTH_DEFAULTS := [0.001, 0.05, 0.6, 0.01]
+
+
+static func from_values(a: Variant, d: Variant, s: Variant, r: Variant,
+		defaults: Array = []) -> StrudelEnvelope:
 	var env := StrudelEnvelope.new()
 	if a == null and d == null and s == null and r == null:
+		if defaults.size() == 4:
+			env.attack = float(defaults[0])
+			env.decay = float(defaults[1])
+			env.sustain = float(defaults[2])
+			env.release = float(defaults[3])
 		return env
 	var sus: float
 	if s != null:
