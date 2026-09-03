@@ -53,6 +53,48 @@ static func imul32(a: int, b: int) -> int:
 
 # ── числа ────────────────────────────────────────────────────────────────────
 
+## Множитель разбиения Деккера: 2^27 + 1.
+const _SPLIT := 134217729.0
+
+
+static func pow_i(x: float, n: int) -> float:
+	## Целая степень с ПРАВИЛЬНЫМ ОКРУГЛЕНИЕМ — как `x ** n` в JS.
+	##
+	## 🔴 Godot считает `pow(x, 5.0)` последовательным умножением, и результат
+	## расходится с движковым `x ** 5` на один-два младших бита. Само по себе
+	## это ничто, но сглаживание перлина (`6x⁵ − 15x⁴ + 10x³`) кормит собой
+	## частоту среза, и сверка с Булкой краснела на верных по слуху числах.
+	##
+	## Считается парой чисел (Деккер): произведение накапливается точно, а
+	## округление происходит РОВНО ОДИН РАЗ, в конце. Это и есть то, что
+	## делает libm.
+	if n == 0:
+		return 1.0
+	if n < 0:
+		return 1.0 / pow_i(x, -n)
+	var hi := x
+	var lo := 0.0
+	for _i in n - 1:
+		var prod := _two_prod(hi, x)
+		var p: float = prod[0]
+		var e: float = prod[1] + lo * x
+		hi = p + e
+		lo = e - (hi - p)
+	return hi
+
+
+static func _two_prod(a: float, b: float) -> Array:
+	## Точное произведение двух чисел парой [старшее, младшее].
+	var p := a * b
+	var ta := _SPLIT * a
+	var ah := ta - (ta - a)
+	var al := a - ah
+	var tb := _SPLIT * b
+	var bh := tb - (tb - b)
+	var bl := b - bh
+	return [p, ((ah * bh - p) + ah * bl + al * bh) + al * bl]
+
+
 static func mod_i(n: int, m: int) -> int:
 	## Остаток, который для отрицательных даёт положительный результат:
 	## mod_i(-1, 3) == 2. Обычный `%` в GDScript вернул бы -1.
@@ -79,6 +121,25 @@ static func parse_numeral(x: Variant) -> Variant:
 
 
 # ── ноты ─────────────────────────────────────────────────────────────────────
+
+static func text(value: Variant) -> String:
+	## Как `String(x)` в JS, но БЕЗОПАСНО.
+	##
+	## 🔴 У встроенного `String()` в GDScript конструкторов всего четыре
+	## (String, StringName, NodePath и пустой) — `String(5.0)` роняет
+	## сценарий строкой «Nonexistent 'String' constructor». А значения
+	## событий приходят чем угодно: числом, `null`, словарём.
+	if value == null:
+		return ""
+	if value is String:
+		return value
+	if value is StringName or value is NodePath:
+		return String(value)
+	if value is float:
+		var f: float = value
+		return str(int(f)) if f == floor(f) and absf(f) < 1e15 else str(f)
+	return str(value)
+
 
 static func is_note(name: String) -> bool:
 	var re := RegEx.create_from_string("^[a-gA-G][#bsf]*-?[0-9]*$")

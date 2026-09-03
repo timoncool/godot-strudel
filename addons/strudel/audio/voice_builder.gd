@@ -44,7 +44,7 @@ static func configure(voice: StrudelVoice, value: Dictionary, length: float,
 	voice.hpq = _num(value, "hresonance", 1.0)
 	voice.bpf = _num(value, "bandf", 0.0)
 	voice.bpq = _num(value, "bandq", 1.0)
-	voice.vowel = String(value.get("vowel", ""))
+	voice.vowel = StrudelUtil.text(value.get("vowel", ""))
 	voice.crush = _num(value, "crush", 0.0)
 	voice.coarse = _num(value, "coarse", 0.0)
 	voice.shape = _num(value, "shape", 0.0)
@@ -56,7 +56,7 @@ static func configure(voice: StrudelVoice, value: Dictionary, length: float,
 	voice.sample_loop = false
 
 	# Умолчание звука в Strudel — треугольник (`superdough.mjs:185`).
-	var sound := String(value.get("s", value.get("sound", DEFAULT_SOUND)))
+	var sound := StrudelUtil.text(value.get("s", value.get("sound", DEFAULT_SOUND)))
 	var is_synth := sound == "" or SYNTHS.has(sound)
 	var picked := {}
 
@@ -84,7 +84,7 @@ static func configure(voice: StrudelVoice, value: Dictionary, length: float,
 		picked = bank.resolve(
 			sound,
 			int(_num(value, "n", 0.0)),
-			String(value.get("bank", "")),
+			StrudelUtil.text(value.get("bank", "")),
 			note_midi
 		)
 

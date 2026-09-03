@@ -171,7 +171,7 @@ static func _perlin_at(t: float, seed_offset: float) -> float:
 	var ra: float = absf(rands_at_time(ta, 1, seed_offset)[0])
 	var rb: float = absf(rands_at_time(tb, 1, seed_offset)[0])
 	var x: float = t - ta
-	var smooth := 6.0 * pow(x, 5.0) - 15.0 * pow(x, 4.0) + 10.0 * pow(x, 3.0)
+	var smooth := 6.0 * StrudelUtil.pow_i(x, 5) - 15.0 * StrudelUtil.pow_i(x, 4) + 10.0 * StrudelUtil.pow_i(x, 3)
 	return ra + smooth * (rb - ra)
 
 
@@ -206,7 +206,13 @@ static func degrade_by_with(pat: StrudelPattern, with_pat: StrudelPattern, amoun
 
 
 static func degrade_by(pat: StrudelPattern, amount: Variant) -> StrudelPattern:
-	return degrade_by_with(pat, rand(), float(amount))
+	## 🔴 Доля — ПАТТЕРН, а не число. `degradeBy("0 0.1 .5 .1")` меняет порог
+	## по четвертям круга; пока здесь стояло `float(amount)`, строка «0 0.1
+	## .5 .1» превращалась в ноль, и не выбрасывалось ничего. На треке
+	## amensister это давало лишние двадцать четыре события.
+	return pat._patternify([amount], func(vals: Array) -> StrudelPattern:
+		return degrade_by_with(pat, rand(), StrudelPattern._num(vals[0]))
+	)
 
 
 static func degrade(pat: StrudelPattern) -> StrudelPattern:
@@ -215,7 +221,11 @@ static func degrade(pat: StrudelPattern) -> StrudelPattern:
 
 static func undegrade_by(pat: StrudelPattern, amount: Variant) -> StrudelPattern:
 	## Обратное degradeBy: остаются ровно те события, что там выпадали.
-	return degrade_by_with(pat, rand().fmap(func(r): return 1.0 - float(r)), float(amount))
+	## Доля так же патернифицируется — см. degrade_by.
+	return pat._patternify([amount], func(vals: Array) -> StrudelPattern:
+		return degrade_by_with(pat, rand().fmap(func(r): return 1.0 - float(r)),
+			StrudelPattern._num(vals[0]))
+	)
 
 
 static func undegrade(pat: StrudelPattern) -> StrudelPattern:

@@ -92,6 +92,24 @@ const _PUNCT := [
 ]
 
 
+## Методы-показывалки: их вызов транспайлер Strudel помечает НОМЕРОМ МЕСТА
+## в исходнике (`plugin-widgets.mjs`), и эта метка уезжает в само событие
+## параметром `analyze`. Без неё значения событий расходятся с Булкой на
+## любом треке, где есть `._scope()`.
+const WIDGET_METHODS := ["_pianoroll", "_punchcard", "_spiral", "_scope",
+	"_pitchwheel", "_spectrum"]
+
+## Сколько показывалок каждого вида уже встретилось. Считается в порядке
+## ЧТЕНИЯ исходника — так же, как обходит дерево транспайлер.
+var _widget_counts: Dictionary = {}
+
+
+func _widget_id(kind: String, from_pos: int, to_pos: int) -> String:
+	var index := int(_widget_counts.get(kind, 0))
+	_widget_counts[kind] = index + 1
+	return "_widget_%s_%d_%d-%d" % [kind, index, from_pos, to_pos]
+
+
 func _tokenize(src: String) -> Array:
 	var toks: Array = []
 	var i := 0
@@ -149,9 +167,14 @@ func _tokenize(src: String) -> Array:
 				_fail("не закрыта кавычка", {"line": line, "col": col})
 				return toks
 			if quote == "`" and text.contains("${"):
-				_fail("шаблонные строки со вставками ${…} не поддержаны", {"line": line, "col": col})
+				_fail("шаблонные строки со вставками ${…} не поддержаны — вынеси значение в переменную",
+					{"line": line, "col": col})
 				return toks
-			toks.append({"t": "str", "v": text, "line": line, "col": col})
+			# 🔴 Вид кавычки ЗАПОМИНАЕТСЯ: в Strudel двойные кавычки — это
+			# mini-нотация, а одинарные — обычная строка. Поэтому
+			# samples('https://…') остаётся ссылкой, а "bd sd" становится
+			# паттерном. Без этого разбор ломается на каждом втором треке.
+			toks.append({"t": "str", "v": text, "q": quote, "line": line, "col": col, "pos": i})
 			i = j + 1
 			continue
 		# числа
@@ -170,7 +193,7 @@ func _tokenize(src: String) -> Array:
 				while j2 < n and _is_digit(src[j2]):
 					num += src[j2]
 					j2 += 1
-			toks.append({"t": "num", "v": num.to_float(), "raw": num, "line": line, "col": col})
+			toks.append({"t": "num", "v": num.to_float(), "raw": num, "line": line, "col": col, "pos": i})
 			i = j2
 			continue
 		# имена
@@ -180,7 +203,7 @@ func _tokenize(src: String) -> Array:
 			while j3 < n and _is_ident_char(src[j3]):
 				name += src[j3]
 				j3 += 1
-			toks.append({"t": "id", "v": name, "line": line, "col": col})
+			toks.append({"t": "id", "v": name, "line": line, "col": col, "pos": i})
 			i = j3
 			continue
 		# знаки
@@ -192,7 +215,7 @@ func _tokenize(src: String) -> Array:
 		if matched == "":
 			_fail("непонятный символ \"%s\"" % c, {"line": line, "col": col})
 			return toks
-		toks.append({"t": "p", "v": matched, "line": line, "col": col})
+		toks.append({"t": "p", "v": matched, "line": line, "col": col, "pos": i})
 		i += matched.length()
 	return toks
 
@@ -367,6 +390,11 @@ func _binary(level: int) -> Dictionary:
 
 
 func _unary() -> Dictionary:
+	# `await` в коде Strudel стоит перед загрузкой сэмплов и визуалом.
+	# Плагин считает синхронно, поэтому слово просто прозрачно.
+	if _is_id("await"):
+		_i += 1
+		return _unary()
 	if _is_p("-") or _is_p("!") or _is_p("+"):
 		var op := String(_take()["v"])
 		var arg := _unary()
@@ -377,6 +405,7 @@ func _unary() -> Dictionary:
 
 
 func _postfix() -> Dictionary:
+	var start_pos := int(_peek().get("pos", 0))
 	var node := _primary()
 	if error != "":
 		return {}
@@ -392,7 +421,9 @@ func _postfix() -> Dictionary:
 		if _is_p("("):
 			_i += 1
 			var args: Array = []
+			var close_end := 0
 			if _is_p(")"):
+				close_end = int(_peek().get("pos", 0)) + 1
 				_i += 1
 			else:
 				while true:
@@ -401,10 +432,22 @@ func _postfix() -> Dictionary:
 						return {}
 					if _is_p(","):
 						_i += 1
+						# Висячая запятая перед ")" — законный JS, и в треках
+						# сообщества она встречается сплошь. Без этого разбор
+						# спотыкался на каждом третьем треке.
+						if _is_p(")"):
+							break
 						continue
 					break
+				close_end = int(_peek().get("pos", 0)) + 1
 				if not _expect(")"):
 					return {}
+			if node.get("t", "") == "member" and WIDGET_METHODS.has(String(node.get("name", ""))):
+				# 🔴 Метка показывалки идёт ПЕРВЫМ доводом — ровно так её
+				# вставляет транспайлер Strudel (`node.arguments.unshift`).
+				args.insert(0, {"t": "str",
+					"v": _widget_id(String(node["name"]), start_pos, close_end),
+					"mini": false})
 			node = {"t": "call", "callee": node, "args": args}
 			continue
 		if _is_p("["):
@@ -415,6 +458,15 @@ func _postfix() -> Dictionary:
 			if not _expect("]"):
 				return {}
 			node = {"t": "index", "obj": node, "key": key}
+			continue
+		# Теговый шаблон: имя сразу за обратными кавычками — это вызов с этой
+		# строкой. Так в коде Strudel задают партитуры Csound и mini-нотацию:
+		#   loadCsound`instr 1 … endin`
+		var tag := _peek()
+		if tag.get("t", "") == "str" and String(tag.get("q", "")) == "`":
+			_i += 1
+			node = {"t": "call", "callee": node,
+				"args": [{"t": "str", "v": tag["v"], "mini": false}]}
 			continue
 		break
 	return node
@@ -431,7 +483,7 @@ func _primary() -> Dictionary:
 			return {"t": "num", "v": t["v"]}
 		"str":
 			_i += 1
-			return {"t": "str", "v": t["v"]}
+			return {"t": "str", "v": t["v"], "mini": String(t.get("q", "\"")) != "'"}
 		"id":
 			var name := String(t["v"])
 			_i += 1

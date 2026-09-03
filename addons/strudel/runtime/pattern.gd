@@ -41,6 +41,11 @@ func has_steps() -> bool:
 	return steps != null
 
 
+## Где лежит разбор mini-нотации. Ставится по пути, чтобы не замкнуть кольцо
+## зависимостей: `mini.gd` ссылается на этот файл.
+const MINI_SCRIPT := "res://addons/strudel/mini/mini.gd"
+
+
 static func set_string_parser(parser: Callable) -> void:
 	## Подключает разбор строк как mini-нотации. Ставится один раз при загрузке.
 	_string_parser = parser
@@ -50,10 +55,37 @@ static func set_string_parser(parser: Callable) -> void:
 # Запрос
 # ═══════════════════════════════════════════════════════════════════════════
 
+## Срыв запроса: причина и глубина вложенности.
+static var _fault := ""
+static var _query_depth := 0
+
+
+static func fault(message: String) -> void:
+	## Объявить ЗАПРОС НЕСОСТОЯВШИМСЯ — замена исключению.
+	##
+	## 🔴 В Strudel часть ошибок внутри запроса НЕ ловится (например,
+	## `_getNearestScaleNote` с неполным именем лада), и исключение убивает
+	## ВЕСЬ запрос целиком — вместе с чужими слоями stack. Трек
+	## festivalOfFingers именно поэтому молчит в Булке целиком, хотя два его
+	## слоя по отдельности играют. В GDScript исключений нет, поэтому срыв
+	## отмечается флажком, а `query_arc` отдаёт пустоту.
+	if _fault == "":
+		_fault = message
+
+
 func query_arc(from_time: Variant, to_time: Variant, controls: Dictionary = {}) -> Array:
 	## Спросить события на отрезке. Точка входа для всего снаружи.
 	var span := StrudelTimeSpan.new(StrudelFraction.of(from_time), StrudelFraction.of(to_time))
-	return query.call(StrudelState.new(span, controls))
+	var outer := _query_depth == 0
+	if outer:
+		_fault = ""
+	_query_depth += 1
+	var haps: Array = query.call(StrudelState.new(span, controls))
+	_query_depth -= 1
+	if outer and _fault != "":
+		push_warning("Strudel: запрос сорвался — %s" % _fault)
+		return []
+	return haps
 
 
 func first_cycle() -> Array:
@@ -444,9 +476,28 @@ static func reify(thing: Variant) -> StrudelPattern:
 		return thing
 	if thing is Array:
 		return sequence(thing)
-	if (thing is String or thing is StringName) and _string_parser.is_valid():
-		return _string_parser.call(String(thing))
+	if thing is String or thing is StringName:
+		return _mini_parser().call(String(thing))
 	return pure(thing)
+
+
+static func _mini_parser() -> Callable:
+	## 🔴 ЛЮБАЯ строка, попавшая в паттерн-функцию, разбирается как
+	## mini-нотация — независимо от кавычек (`pattern.mjs:1409`, разборщик
+	## ставится через `setStringParser` в `@strudel/mini`).
+	##
+	## Кавычки решают только, тронет ли строку транспайлер: `"a b"` он сам
+	## обернёт в `mini(...)`, чтобы у неё был метод `.add`. А вот
+	## `.scale('C bebop major')` доходит сюда СТРОКОЙ — и разбирается в три
+	## доли: «C», «bebop», «major». Булка на этом отбрасывает первую и третью
+	## («C» — не лад) и играет средней. Пока разборщик не стоял, плагин брал
+	## всю строку целиком и расходился с эталоном на каждом ладу.
+	##
+	## Грузится по пути, а не по имени класса: `mini.gd` уже зависит от этого
+	## файла, и прямая ссылка замкнула бы разбор в кольцо.
+	if not _string_parser.is_valid():
+		_string_parser = Callable(load(MINI_SCRIPT), "mini")
+	return _string_parser
 
 
 static func stack(pats: Array) -> StrudelPattern:
@@ -1144,6 +1195,127 @@ func within(from_pos: Variant, to_pos: Variant, fn: Callable) -> StrudelPattern:
 # ═══════════════════════════════════════════════════════════════════════════
 # Нарезка сэмплов
 # ═══════════════════════════════════════════════════════════════════════════
+
+func loop_at(factor: Variant, cps_override: Variant = null) -> StrudelPattern:
+	## Растянуть сэмпл на N кругов: скорость воспроизведения подгоняется
+	## под темп, единица длины — круг (`unit('c')`).
+	##
+	## 🔴 Темп берётся ИЗ ЗАПРОСА (`state.controls._cps`), а не из поля
+	## объекта: круг в секунду меняется на ходу, и вшитое число рассинхронит
+	## петлю с музыкой. Поэтому паттерн собирается внутри запроса.
+	var me := self
+	var f := StrudelFraction.of(factor)
+	var result := StrudelPattern.new(func(state: StrudelState) -> Array:
+		var cps: float = float(cps_override) if cps_override != null 			else float(state.controls.get("_cps", 0.5))
+		return me._loop_at(f, cps).query.call(state)
+	)
+	result.steps = null if steps == null else steps.div(f)
+	return result
+
+
+func _loop_at(f: StrudelFraction, cps: float) -> StrudelPattern:
+	return ctrl("speed", (1.0 / f.to_float()) * cps).ctrl("unit", "c").slow(f)
+
+
+func fit() -> StrudelPattern:
+	## Уложить сэмпл РОВНО в длину события. Для брейков и петель.
+	return with_haps(func(haps: Array, state: StrudelState) -> Array:
+		var cps: float = float(state.controls.get("_cps", 1.0))
+		var out: Array = []
+		for hap in haps:
+			var h: StrudelHap = hap
+			if h.whole == null:
+				out.append(h)
+				continue
+			var v: Dictionary = h.value if h.value is Dictionary else {"value": h.value}
+			var begin: float = float(v["begin"]) if v.has("begin") else 0.0
+			var end: float = float(v["end"]) if v.has("end") else 1.0
+			var d := v.duplicate()
+			d["speed"] = (cps / h.whole.duration().to_float()) * (end - begin)
+			d["unit"] = "c"
+			out.append(StrudelHap.new(h.whole, h.part, d, h.context))
+		return out
+	)
+
+
+func slice_(count: Variant, index_pat: Variant) -> StrudelPattern:
+	## Нарезать сэмпл на N кусков и играть их по номерам.
+	##
+	## Имя с подчёркиванием: `slice` занято под срез массива в самом GDScript.
+	## Вместо числа можно дать СПИСОК долей от 0 до 1 — тогда куски
+	## неравные.
+	var opat := self
+	var npat := StrudelPattern.reify(count)
+	var ipat := StrudelPattern.reify(index_pat)
+	var result := npat.inner_bind(func(n) -> StrudelPattern:
+		return ipat.outer_bind(func(i) -> StrudelPattern:
+			return opat.outer_bind(func(o) -> StrudelPattern:
+				var base: Dictionary = o if o is Dictionary else {"s": o}
+				var idx := int(_num(i))
+				var begin: float
+				var end: float
+				if n is Array:
+					var list: Array = n
+					begin = _num(list[idx])
+					end = _num(list[idx + 1]) if idx + 1 < list.size() else 1.0
+				else:
+					var total := _num(n)
+					begin = float(idx) / total
+					end = float(idx + 1) / total
+				var d := {"begin": begin, "end": end, "_slices": n}
+				for k in base:
+					d[k] = base[k]
+				return StrudelPattern.pure(d)
+			)
+		)
+	)
+	return result.set_steps(ipat.steps)
+
+
+func splice_(count: Variant, index_pat: Variant) -> StrudelPattern:
+	## То же, что `slice`, но каждый кусок ещё и РАСТЯГИВАЕТСЯ под длину
+	## своего шага — брейк ложится в ритм сам.
+	var sliced := slice_(count, index_pat)
+	var result := StrudelPattern.new(func(state: StrudelState) -> Array:
+		var cps: float = float(state.controls.get("_cps", 1.0))
+		var out: Array = []
+		for hap in sliced.query.call(state):
+			var h: StrudelHap = hap
+			if h.whole == null or not h.value is Dictionary:
+				out.append(h)
+				continue
+			var v: Dictionary = h.value
+			var slices := _num(v.get("_slices", 1))
+			var own_speed := _num(v.get("speed", 1))
+			# 🔴 Порядок слияния как в оригинале: СВОИ поля события сильнее
+			# рассчитанных, потому вручную заданный speed не затирается.
+			var d := {
+				"speed": (cps / slices / h.whole.duration().to_float()) * own_speed,
+				"unit": "c",
+			}
+			for k in v:
+				d[k] = v[k]
+			out.append(StrudelHap.new(h.whole, h.part, d, h.context))
+		return out
+	)
+	return result.set_steps(StrudelPattern.reify(index_pat).steps)
+
+
+func bite(count: Variant, index_pat: Variant) -> StrudelPattern:
+	## Разбить круг на N кусков и играть их по номерам, вжимая каждый в свой
+	## шаг (`squeezeJoin`). В отличие от `slice` режется САМ ПАТТЕРН, а не
+	## сэмпл.
+	var me := self
+	var npat := StrudelPattern.reify(count)
+	var ipat := StrudelPattern.reify(index_pat)
+	return ipat.fmap(func(i) -> Callable:
+		return func(n) -> StrudelPattern:
+			var nf := StrudelFraction.of(n)
+			var a := StrudelFraction.of(i).div(nf).mod(1)
+			var b := a.add(StrudelFraction.new(1).div(nf))
+			return me.zoom(a, b)
+	).app_left(npat).squeeze_join()
+
 
 func chop(n: int) -> StrudelPattern:
 	## Режет каждый сэмпл на N кусков.

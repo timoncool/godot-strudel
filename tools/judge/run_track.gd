@@ -35,15 +35,17 @@ func _init() -> void:
 
 	var t_query := Time.get_ticks_usec()
 	var rows: Array = []
-	for c in CYCLES:
-		for hap in pat.query_arc(c, c + 1):
-			rows.append([
-				"" if hap.whole == null else hap.whole.begin.show(),
-				"" if hap.whole == null else hap.whole.end.show(),
-				hap.part.begin.show(),
-				hap.part.end.show(),
-				_canon(hap.value),
-			])
+	# 🔴 ОДИН запрос на все круги, а не по кругу за раз: покруговая выборка
+	# режет события, чьё «целое» переходит через границу круга. Эталон снят
+	# ровно так же — `queryArc(0, CYCLES)` одним вызовом.
+	for hap in pat.query_arc(0, CYCLES):
+		rows.append([
+			"" if hap.whole == null else hap.whole.begin.show(),
+			"" if hap.whole == null else hap.whole.end.show(),
+			hap.part.begin.show(),
+			hap.part.end.show(),
+			_canon(hap.value),
+		])
 	var query_ms := (Time.get_ticks_usec() - t_query) / 1000.0
 
 	var out := FileAccess.open(OUT, FileAccess.WRITE)

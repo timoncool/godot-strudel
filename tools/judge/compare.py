@@ -77,6 +77,10 @@ def main() -> int:
             # Главная приёмка: целый трек вместо корпуса выражений.
             GOLDEN = HERE / "golden" / "track_haps.json"
             MINE = HERE / "golden" / "godot_track.json"
+        elif arg == "--tunes":
+            # Настоящие треки сообщества из коллекции Strudel.
+            GOLDEN = HERE / "golden" / "tunes_haps.json"
+            MINE = HERE / "golden" / "godot_tunes.json"
         elif arg in ("-v", "--verbose"):
             verbose = True
 

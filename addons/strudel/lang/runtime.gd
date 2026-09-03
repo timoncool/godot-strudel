@@ -87,7 +87,10 @@ func _eval(node: Variant, locals: Dictionary = {}) -> Variant:
 		"num":
 			return n["v"]
 		"str":
-			# Строка в коде Strudel — это mini-нотация.
+			# 🔴 Двойные кавычки — mini-нотация, одинарные — обычная строка.
+			# Так в Strudel: samples('github:…') это ссылка, а "bd sd" — паттерн.
+			if not bool(n.get("mini", true)):
+				return String(n["v"])
 			# Ошибку разбора НЕ проглатываем: чужой пользователь должен
 			# увидеть, что именно у него не так и в каком месте строки.
 			var attempt := StrudelMini.try_mini(String(n["v"]))

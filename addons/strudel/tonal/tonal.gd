@@ -80,6 +80,17 @@ static func interval_semitones(step: String) -> int:
 	return semis
 
 
+static func interval_parts(step: String) -> Array:
+	## → [номер ступени, полутоны]. "3m" → [3, 3], "4A" → [4, 6], "9M" → [9, 14].
+	var num_text := ""
+	for i in step.length():
+		var c := step[i]
+		if c >= "0" and c <= "9":
+			num_text += c
+	var number := num_text.to_int() if num_text != "" else 1
+	return [number, interval_semitones(step)]
+
+
 static func tokenize_chord(chord: String) -> Array:
 	## "C^7" → ["C", "^7"], "Am7" → ["A", "m7"], "C/G" → ["C", "", "G"].
 	var re := RegEx.create_from_string("^([A-G][b#]*)([^/]*)[/]?([A-G][b#]*)?$")
@@ -95,7 +106,7 @@ static func note_or_midi(value: Variant, default_octave: int = 3) -> int:
 	if value is float:
 		return int(value)
 	if value is String or value is StringName:
-		return StrudelUtil.note_to_midi(String(value), default_octave)
+		return StrudelUtil.note_to_midi(StrudelUtil.text(value), default_octave)
 	if value is Dictionary and (value as Dictionary).has("note"):
 		return note_or_midi((value as Dictionary)["note"], default_octave)
 	return 0
@@ -202,9 +213,9 @@ static func voicing(pat: StrudelPattern) -> StrudelPattern:
 		var v: Dictionary = value if value is Dictionary else {"chord": value}
 		var dict_name: Variant = v.get("dictionary", "ireal")
 		var opts := {
-			"chord": String(v.get("chord", "")),
-			"dictionary": StrudelVoicingTable.dictionary(String(dict_name)),
-			"mode": String(v.get("mode", "below")),
+			"chord": StrudelUtil.text(v.get("chord", "")),
+			"dictionary": StrudelVoicingTable.dictionary(StrudelUtil.text(dict_name)),
+			"mode": StrudelUtil.text(v.get("mode", "below")),
 			"anchor": v.get("anchor", "c5"),
 			"offset": int(StrudelPattern._num(v.get("offset", 0))),
 			"octaves": int(StrudelPattern._num(v.get("octaves", 1))),
@@ -236,7 +247,7 @@ static func root_notes(pat: StrudelPattern, octave: Variant) -> StrudelPattern:
 	## Основные тоны аккордов в заданной октаве.
 	var oct := int(StrudelPattern._num(octave))
 	return pat.fmap(func(value):
-		var chord_text := String(value["chord"]) if (value is Dictionary and (value as Dictionary).has("chord")) else String(value)
+		var chord_text := StrudelUtil.text(value["chord"]) if (value is Dictionary and (value as Dictionary).has("chord")) else StrudelUtil.text(value)
 		var re := RegEx.create_from_string("^([a-gA-G][b#]?).*$")
 		var m := re.search(chord_text)
 		if m == null:
@@ -265,9 +276,17 @@ static func interval_from_semitones(semitones: int) -> Array:
 
 static func transpose_note(note: String, semitones: int) -> String:
 	## Сдвиг ноты С СОХРАНЕНИЕМ НАЗВАНИЯ: c3 + 5 полутонов = F3, а не 53.
+	var interval := interval_from_semitones(semitones)
+	return transpose_by(note, int(interval[0]), semitones)
+
+
+static func transpose_by(note: String, interval_number: int, semitones: int) -> String:
+	## Сдвиг по ЯВНОМУ интервалу: отдельно ступень, отдельно полутоны.
 	##
-	## Ноту нельзя просто перевести в число: Булка отдаёт имена, и запись
-	## «F3» против «53» — это расхождение в сверке на ровном месте.
+	## 🔴 Одному числу полутонов отвечают РАЗНЫЕ названия: увеличенная кварта
+	## (4A) и уменьшённая квинта (5d) — обе шесть полутонов, но первая от C
+	## даёт F#, а вторая Gb. Лады пользуются именно этим, поэтому ступень
+	## нельзя выводить из полутонов — её задаёт сам интервал лада.
 	var parts := StrudelUtil.tokenize_note(note)
 	if parts.is_empty():
 		return note
@@ -275,8 +294,7 @@ static func transpose_note(note: String, semitones: int) -> String:
 	var letter_index := LETTERS.find(String(parts[0]).to_upper())
 	if letter_index < 0:
 		return note
-	var interval := interval_from_semitones(semitones)
-	var total: int = letter_index + int(interval[0]) - 1
+	var total: int = letter_index + interval_number - 1
 	var target_index := StrudelUtil.mod_i(total, 7)
 	var octave_carry := int(floor(float(total) / 7.0))
 	var target_octave := octave + octave_carry
@@ -333,10 +351,12 @@ static func scale(pat: StrudelPattern, name: Variant) -> StrudelPattern:
 		return pat.with_haps(func(haps: Array, _state) -> Array:
 			var out: Array = []
 			for hap in haps:
+				var value: Variant = _apply_scale(hap.value, text)
+				if value == null:
+					continue  # лад не разобрался — событие выброшено
 				var ctx := (hap as StrudelHap).context.duplicate()
 				ctx["scale"] = text
-				out.append(StrudelHap.new(hap.whole, hap.part,
-					_apply_scale(hap.value, text), ctx))
+				out.append(StrudelHap.new(hap.whole, hap.part, value, ctx))
 			return out
 		)
 	)
@@ -351,38 +371,154 @@ static func _scale_text(v: Variant) -> String:
 	return String(v).replace(":", " ")
 
 
+static func get_scale(scale_name: String) -> Dictionary:
+	## Разбор имени лада по правилам Tonal (`getScale`, `tonal.mjs:23`).
+	##
+	## → {ok, tonic_pc, octave, tokens} либо {ok=false}.
+	##
+	## 🔴 ТОНИКА НЕОБЯЗАТЕЛЬНА. «bebop» — полноценное имя лада, тоника тогда
+	## «C», октава третья. А вот «C» — имя НЕПОЛНОЕ (лада с таким названием
+	## нет), и такое событие Булка выбрасывает.
+	var name := scale_name.replace(":", " ").strip_edges()
+	var parts := name.split(" ", false)
+	if parts.is_empty():
+		return {"ok": false}
+	var tonic_text := ""
+	var type_name := name
+	if StrudelUtil.is_note(String(parts[0])):
+		tonic_text = String(parts[0])
+		type_name = " ".join(Array(parts.slice(1)))
+	var intervals_text := StrudelScaleTable.intervals(type_name)
+	if intervals_text.is_empty():
+		return {"ok": false}
+	var octave := 3
+	var tonic_pc := "C"
+	if tonic_text != "":
+		var tp := StrudelUtil.tokenize_note(tonic_text)
+		if tp.is_empty():
+			return {"ok": false}
+		tonic_pc = String(tp[0]).to_upper() + String(tp[1])
+		if tp[2] != null:
+			octave = int(tp[2])
+	return {
+		"ok": true,
+		"tonic_pc": tonic_pc,
+		"octave": octave,
+		"tokens": intervals_text.split(" ", false),
+	}
+
+
 static func _apply_scale(value: Variant, scale_name: String) -> Variant:
-	var v: Dictionary = value if value is Dictionary else {"n": value}
+	## 🔴 Что вернуть — решает ВХОД. Пришло простое значение (число или строка)
+	## — лад отдаёт СТРОКУ-НОТУ; пришёл словарь — словарь с полем note
+	## (`tonal.mjs:320`). Спутать это значит получить `{note:{note:"B3"}}`
+	## после следующего `.note()`.
+	##
+	## `null` на выходе значит ВЫБРОСИТЬ событие: имя лада не разобралось.
+	## Так делает и Булка (`errorLogger` плюс `removeUndefineds`), и на этом
+	## держится вся раскладка `.scale('C bebop major')` — из трёх долей
+	## остаётся одна.
+	var is_object := value is Dictionary
+	var v: Dictionary = value if is_object else {"n": value}
 	var step: Variant = v.get("note", v.get("n", v.get("value")))
 	if step == null:
 		return value
-	var parts := scale_name.strip_edges().split(" ", false)
-	if parts.is_empty():
-		return value
-	var tonic := String(parts[0])
-	var rest_name := " ".join(Array(parts.slice(1)))
-	var intervals_text := StrudelScaleTable.intervals(rest_name)
-	if intervals_text.is_empty():
-		push_warning("Strudel: не знаю лада \"%s\"" % rest_name)
-		return value
-	var intervals: Array = []
-	for token in intervals_text.split(" ", false):
-		intervals.append(interval_semitones(token))
 
-	var tonic_midi := StrudelUtil.note_to_midi(tonic, 3)
-	var idx := int(StrudelPattern._num(step))
-	var oct_offset := int(floor(float(idx) / float(intervals.size()))) * 12
-	var pos := StrudelUtil.mod_i(idx, intervals.size())
-	var note_midi: int = tonic_midi + int(intervals[pos]) + oct_offset
+	var sc := get_scale(scale_name)
+	if not sc.get("ok", false):
+		# 🔴 Ветка «на входе нота» в оригинале НЕ обёрнута try/catch
+		# (`tonal.mjs:303`): исключение оттуда уносит весь запрос. Ветка
+		# «на входе ступень» обёрнута — там событие просто выбрасывается.
+		if (step is String or step is StringName) and StrudelUtil.is_note(String(step)):
+			StrudelPattern.fault("не знаю лада \"%s\"" % scale_name)
+		return null
+	var tokens: PackedStringArray = sc["tokens"]
+	var tonic_pc: String = sc["tonic_pc"]
+	var octave: int = sc["octave"]
 
+	var note_name: String
+	if (step is String or step is StringName) and StrudelUtil.is_note(String(step)):
+		# Нота на входе — подтягиваем к ближайшей ступени лада.
+		note_name = _nearest_scale_note(tokens, tonic_pc, String(step))
+	elif step is String or step is StringName:
+		var pair := _step_and_offset(String(step))
+		note_name = _scale_step(tokens, tonic_pc, octave, int(pair[0]))
+		if int(pair[1]) != 0:
+			note_name = transpose_note(note_name, int(pair[1]))
+	else:
+		note_name = _scale_step(tokens, tonic_pc, octave,
+			int(ceil(StrudelPattern._num(step))))
+
+	if not is_object:
+		return note_name
 	var out := {}
 	for k in v:
-		if k in ["n", "value"]:
+		if k in ["n", "value", "note"]:
 			continue
 		out[k] = v[k]
-	out["note"] = midi_to_note(note_midi)
+	out["note"] = note_name
 	return out
 
+
+static func _scale_step(tokens: PackedStringArray, tonic_pc: String,
+		tonic_octave: int, step: int) -> String:
+	## Ступень лада по номеру, с переносом октав. Перенос `scaleStep`
+	## (`tonal.mjs:36`): название берётся сложением ИНТЕРВАЛА, а не полутонов.
+	var count := tokens.size()
+	if count == 0:
+		return tonic_pc + str(tonic_octave)
+	var oct_offset := int(floor(float(step) / float(count)))
+	var pos := StrudelUtil.mod_i(step, count)
+	var parts := interval_parts(String(tokens[pos]))
+	var number: int = int(parts[0]) + oct_offset * 7
+	var semis: int = int(parts[1]) + oct_offset * 12
+	return transpose_by(tonic_pc + str(tonic_octave), number, semis)
+
+
+static func _nearest_scale_note(tokens: PackedStringArray, tonic_pc: String,
+		note: String) -> String:
+	## Подтянуть ноту к ближайшей ступени лада (`_getNearestScaleNote`).
+	var target := StrudelUtil.note_to_midi(note, 3)
+	var names: Array = []
+	var midis: Array = []
+	for token in tokens:
+		var ip := interval_parts(String(token))
+		var n := transpose_by(tonic_pc + "0", int(ip[0]), int(ip[1]))
+		names.append(n)
+		midis.append(StrudelUtil.note_to_midi(n, 0))
+	var octave_note := transpose_by(tonic_pc + "0", 8, 12)
+	names.append(octave_note)
+	midis.append(StrudelUtil.note_to_midi(octave_note, 0))
+
+	var root: int = int(midis[0])
+	var oct_diff := int(floor(float(target - root) / 12.0))
+	var best := 0
+	var best_diff := 1e9
+	for i in midis.size():
+		var m: int = int(midis[i]) + 12 * oct_diff
+		var d := absf(float(m - target))
+		if d <= best_diff:
+			best_diff = d
+			best = i
+	var chosen := String(names[best])
+	var cp := StrudelUtil.tokenize_note(chosen)
+	var base_oct: int = cp[2] if cp[2] != null else 0
+	return String(cp[0]) + String(cp[1]) + str(base_oct + oct_diff)
+
+
+static func _step_and_offset(text: String) -> Array:
+	## "0" → [0, 0]; "0#" → [0, +1]; "2b" → [2, −1].
+	var digits := ""
+	var offset := 0
+	for i in text.length():
+		var c := text[i]
+		if (c >= "0" and c <= "9") or c == "-":
+			digits += c
+		elif c == "#" or c == "s":
+			offset += 1
+		elif c == "b" or c == "f":
+			offset -= 1
+	return [digits.to_int() if digits != "" else 0, offset]
 
 static func arp(pat: StrudelPattern, indices: Variant) -> StrudelPattern:
 	## Разбивает созвучие на голоса по номерам.
@@ -416,3 +552,119 @@ static func _collect(pat: StrudelPattern) -> StrudelPattern:
 			out.append(StrudelHap.new(first.whole, first.part, g, {}))
 		return out
 	)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Готовые сокращения
+# ═══════════════════════════════════════════════════════════════════════════
+
+## Верхняя нота фортепианного диапазона, по которой считается панорама.
+const PIANO_TOP := 108.0
+
+
+static func piano(pat: StrudelPattern) -> StrudelPattern:
+	## `.piano()` — не просто звук.
+	##
+	## Кроме `s("piano")` он ставит `clip` (если не задан), короткое отпускание
+	## и РАСКЛАДЫВАЕТ НОТЫ ПО ПАНОРАМЕ ПО ВЫСОТЕ: низкие левее, высокие правее.
+	## Формула снята с живой Булки и сверена на шести нотах:
+	##   pan = (заданный pan или 1) × (0.5 + (min(midi/108, 1) − 0.5) × 0.5)
+	return pat.fmap(func(v):
+		var d: Dictionary = (v as Dictionary).duplicate() if v is Dictionary else {"value": v}
+		if not d.has("clip"):
+			d["clip"] = 1
+		return d
+	).ctrl("s", "piano").ctrl("release", 0.1).fmap(func(v):
+		if not v is Dictionary:
+			return v
+		var d: Dictionary = (v as Dictionary).duplicate()
+		var midi := float(note_or_midi(d.get("note", 60)))
+		var x: float = minf(round(midi) / PIANO_TOP, 1.0)
+		var spread := 0.5 + (x - 0.5) * 0.5
+		var existing := float(d["pan"]) if d.has("pan") else 1.0
+		d["pan"] = existing * spread
+		return d
+	)
+
+
+static func scale_transpose(pat: StrudelPattern, offset: Variant) -> StrudelPattern:
+	## Сдвиг ПО СТУПЕНЯМ лада, а не по полутонам. Требует, чтобы до него уже
+	## был вызван `.scale(...)` — имя лада берётся из контекста события.
+	return pat._patternify([offset], func(vals: Array) -> StrudelPattern:
+		var steps := int(StrudelPattern._num(vals[0]))
+		return pat.with_haps(func(haps: Array, _state) -> Array:
+			var out: Array = []
+			for hap in haps:
+				var scale_name := String((hap as StrudelHap).context.get("scale", ""))
+				if scale_name == "":
+					StrudelPattern.fault("scaleTranspose без предшествующего scale")
+					return []
+				var value = hap.value
+				if value is Dictionary:
+					var d: Dictionary = (value as Dictionary).duplicate()
+					var moved := _scale_offset(scale_name, steps, StrudelUtil.text(d.get("note", "")))
+					if moved == "":
+						return []
+					d["note"] = moved
+					out.append(StrudelHap.new(hap.whole, hap.part, d, hap.context))
+				elif value is String or value is StringName:
+					var moved2 := _scale_offset(scale_name, steps, String(value))
+					if moved2 == "":
+						return []
+					out.append(StrudelHap.new(hap.whole, hap.part, moved2, hap.context))
+				else:
+					# 🔴 Оригинал здесь БРОСАЕТ («can only use scaleTranspose
+					# with notes»), а не пропускает событие мимо.
+					StrudelPattern.fault("scaleTranspose не по нотам")
+					return []
+			return out
+		)
+	)
+
+
+static func _scale_offset(scale_name: String, offset: int, note: String) -> String:
+	## Шаг по ступеням лада с переносом октавы. Перенос `scaleOffset`
+	## из `tonal.mjs:49` — включая правило «октава меняется на ноте C».
+	##
+	## Пустая строка на выходе значит СРЫВ запроса: оригинал в этих случаях
+	## бросает исключение, и оно уносит весь запрос целиком.
+	var sc := get_scale(scale_name)
+	if not sc.get("ok", false):
+		StrudelPattern.fault("не знаю лада \"%s\"" % scale_name)
+		return ""
+	var tonic_pc: String = sc["tonic_pc"]
+	var tokens: PackedStringArray = sc["tokens"]
+
+	# 🔴 Ступени лада — НАЗВАНИЯ нот, а не хроматические номера. У соль мажора
+	# седьмая ступень «F#», а не «Gb»; сравнение в оригинале строковое, и по
+	# хроме нота бы не нашлась.
+	var names: Array = []
+	for token in tokens:
+		var ip := interval_parts(String(token))
+		var n := transpose_by(tonic_pc + "0", int(ip[0]), int(ip[1]))
+		var np := StrudelUtil.tokenize_note(n)
+		names.append(String(np[0]) + String(np[1]))
+
+	var tok := StrudelUtil.tokenize_note(note)
+	if tok.is_empty():
+		StrudelPattern.fault("\"%s\" — не нота" % note)
+		return ""
+	var from_pc := String(tok[0]).to_upper() + String(tok[1])
+	var octave: int = tok[2] if tok[2] != null else 3
+	var index := names.find(from_pc)
+	if index < 0:
+		StrudelPattern.fault("нота \"%s\" не входит в лад \"%s\"" % [note, scale_name])
+		return ""
+
+	var i := index
+	var o := octave
+	var n2 := from_pc
+	var direction := signi(offset)
+	while absi(i - index) < absi(offset):
+		i += direction
+		var idx := StrudelUtil.mod_i(i, names.size())
+		if direction < 0 and n2.begins_with("C"):
+			o += direction
+		n2 = String(names[idx])
+		if direction > 0 and n2.begins_with("C"):
+			o += direction
+	return n2 + str(o)

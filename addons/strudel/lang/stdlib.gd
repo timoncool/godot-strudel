@@ -29,7 +29,7 @@ const BARE_METHODS := ["rev", "revv", "press", "palindrome", "brak", "hurry",
 ## Показ и отладка — на звук не влияют, но встречаются в чужом коде сплошь и
 ## рядом. Их надо ПРОПУСКАТЬ, а не падать на них.
 const PASSTHROUGH := ["_punchcard", "punchcard", "_pianoroll",
-	"pianoroll", "_spiral", "color", "log", "logValues",
+	"pianoroll", "_spiral", "log", "logValues",
 	"onTrigger", "tag", "_pitchwheel", "markcss"]
 
 ## Осциллоскоп. Своей картинки у плагина нет, но пометку он ставит ТУ ЖЕ, что
@@ -144,6 +144,28 @@ static func global_call(rt, name: String, args: Array) -> Variant:
 			return null
 		"id":
 			return args[0] if not args.is_empty() else null
+		# Операции слияния как ВЕРХНЕУРОВНЕВЫЕ функции: `add(7)` отдаёт
+		# преобразование, которое потом применяют к паттерну — так их
+		# и пишут в чужих треках: `.off(1/8, add(7))`.
+		"add", "sub", "mul", "div", "mod", "pow", "set", "keep", "keepif", 		"band", "bor", "bxor", "blshift", "brshift", 		"lt", "gt", "lte", "gte", "eq", "ne", "and", "or":
+			return func(inner: Array) -> Variant:
+				if inner.is_empty() or not (inner[0] is StrudelPattern):
+					push_error("Strudel: \"%s\" ждёт паттерн" % name)
+					return null
+				return (inner[0] as StrudelPattern)._compose(name, "in", args)
+		"struct":
+			return func(inner: Array) -> Variant:
+				return (inner[0] as StrudelPattern).struct_(args)
+		"mask":
+			return func(inner: Array) -> Variant:
+				return (inner[0] as StrudelPattern).mask_(args)
+		"scaleTranspose", "scaleTrans", "strans":
+			return func(inner: Array) -> Variant:
+				return StrudelTonal.scale_transpose(inner[0], _arg(args, 0))
+		"setVoicingRange", "setDefaultVoicings", "addVoicings", "registerVoicings", 		"setGainCurve", "resetDefaults", "setDefaultValue", "setDefaultValues", 		"registerSynthSounds", "setMasterVolume", "loadCsound", "loadOrc", 		"loadSoundfont", "aliasBank", "setcpm2", "enableAudioWorklets":
+			# Настройки, которые на СОБЫТИЯ не влияют: пропускаем, чтобы чужой
+			# код не падал на строке, которая ничего не значит для нот.
+			return null
 		# тональные
 		"chord", "voicing", "mode", "scale", "rootNotes", "transpose", "arp", "arpWith", "note", "n":
 			return _tonal_or_control(rt, name, args)
@@ -215,7 +237,12 @@ const _METHODS := {
 	"expand": 1, "contract": 1, "extend": 1, "filter": 1, "filterWhen": 1,
 	"queryArc": 1, "firstCycle": 1, "invert": 1, "inv": 1,
 	"voicing": 1, "mode": 1, "rootNotes": 1, "transpose": 1, "scale": 1,
-	"arp": 1, "arpWith": 1, "chord": 1,
+	"arp": 1, "arpWith": 1, "chord": 1, "piano": 1,
+	"scaleTranspose": 1, "scaleTrans": 1, "strans": 1,
+	"euclidLegatoRot": 1, "loopAt": 1, "loopat": 1, "loopAtCps": 1,
+	"fit": 1, "slice": 1, "splice": 1, "bite": 1,
+	"hush": 1, "reset": 1, "restart": 1, "resetAll": 1, "restartAll": 1,
+	"csound": 1,
 }
 
 
@@ -223,7 +250,13 @@ static func method_call(rt, pat: StrudelPattern, name: String, args: Array) -> V
 	if PASSTHROUGH.has(name):
 		return pat
 	if SCOPE_METHODS.has(name):
-		return StrudelControls.apply(pat, "analyze", 1)
+		# 🔴 Значение `analyze` — это МЕТКА МЕСТА В ИСХОДНИКЕ, а не единица:
+		# `_widget__scope_0_3971-3982`. Её ставит разбор кода (см.
+		# WIDGET_METHODS в code_parser.gd), потому что так делает транспайлер
+		# Strudel, и она попадает в само событие. Игра вольна прочитать метку
+		# и нарисовать свою волну — а сверка с Булкой сходится битами.
+		var tag: Variant = _arg(args, 0)
+		return StrudelControls.apply(pat, "analyze", tag if tag is String else 1)
 
 	match name:
 		# — время —
@@ -297,9 +330,9 @@ static func method_call(rt, pat: StrudelPattern, name: String, args: Array) -> V
 		"filter": return pat.filter_haps(_fnv(args, 0))
 
 		# — вероятностное —
-		"degradeBy": return StrudelSignal.degrade_by(pat, _f(_arg(args, 0)))
+		"degradeBy": return StrudelSignal.degrade_by(pat, _arg(args, 0))
 		"degrade": return StrudelSignal.degrade(pat)
-		"undegradeBy": return StrudelSignal.undegrade_by(pat, _f(_arg(args, 0)))
+		"undegradeBy": return StrudelSignal.undegrade_by(pat, _arg(args, 0))
 		"undegrade": return StrudelSignal.undegrade(pat)
 		"sometimesBy": return StrudelSignal.sometimes_by(pat, _arg(args, 0), _fn1(args, 1))
 		"sometimes": return StrudelSignal.sometimes(pat, _fn1(args, 0))
@@ -326,14 +359,53 @@ static func method_call(rt, pat: StrudelPattern, name: String, args: Array) -> V
 		"fromBipolar": return pat.from_bipolar()
 		"invert", "inv": return pat.fmap(func(v): return not StrudelPattern.truthy(v))
 
+		# — звуковые сокращения —
+		"piano": return StrudelTonal.piano(pat)
+
 		# — тональное —
-		"chord": return StrudelTonal.chord(pat)
+		"chord":
+			# 🔴 chord — ОБЫЧНЫЙ параметр, а не тональная функция. Без довода
+			# (`seq(...).chord()`) он перекладывает значения самого паттерна, с
+			# доводом (`n("0 1").chord("<Am7 C7>")`) — ставится поверх, как gain.
+			# Пока метод игнорировал довод, аккорд до раскладки не доезжал вовсе
+			# и весь слой arpoon молчал.
+			return StrudelControls.apply(pat, "chord", _arg(args, 0))
 		"voicing": return StrudelTonal.voicing(pat)
 		"mode": return StrudelTonal.mode(pat, _arg(args, 0))
 		"rootNotes": return StrudelTonal.root_notes(pat, _arg(args, 0))
 		"transpose": return StrudelTonal.transpose(pat, _arg(args, 0))
 		"scale": return StrudelTonal.scale(pat, _arg(args, 0))
 		"arp": return StrudelTonal.arp(pat, _arg(args, 0))
+		"scaleTranspose", "scaleTrans", "strans":
+			return StrudelTonal.scale_transpose(pat, _arg(args, 0))
+		"euclidLegatoRot":
+			return StrudelEuclid.apply_legato(pat, int(_f(_arg(args, 0))),
+				int(_f(_arg(args, 1))), int(_f(_arg(args, 2))))
+		"loopAt", "loopat":
+			return pat.loop_at(_arg(args, 0))
+		"loopAtCps", "loopatcps":
+			return pat.loop_at(_arg(args, 0), _f(_arg(args, 1)))
+		"fit":
+			return pat.fit()
+		"slice":
+			return pat.slice_(_arg(args, 0), _arg(args, 1))
+		"splice":
+			return pat.splice_(_arg(args, 0), _arg(args, 1))
+		"bite":
+			return pat.bite(_arg(args, 0), _arg(args, 1))
+		"hush":
+			# Заглушить целиком — так в чужих треках выключают партию, не
+			# стирая её из кода.
+			return StrudelPattern.silence()
+		"reset": return pat.reset(args)
+		"restart": return pat.restart(args)
+		"resetAll": return pat._compose("keep", "reset", args)
+		"restartAll": return pat._compose("keep", "restart", args)
+		"csound":
+			# Csound — внешний движок синтеза, в плагин он не входит. Партия
+			# продолжает играть штатным путём, но своим тембром Csound не даёт.
+			push_warning("Strudel: .csound() не поддержан — партия играет штатным звуком")
+			return pat
 
 		# — запрос —
 		"queryArc": return pat.query_arc(_arg(args, 0), _arg(args, 1))
