@@ -520,6 +520,60 @@ static func _step_and_offset(text: String) -> Array:
 			offset -= 1
 	return [digits.to_int() if digits != "" else 0, offset]
 
+static func arp_with(pat: StrudelPattern, fn: Callable) -> StrudelPattern:
+	## Разбор созвучия СВОИМ правилом: на вход даётся список одновременных
+	## событий, на выход — что из них играть. `arp` — частный случай.
+	return pat.collect().fmap(func(v) -> StrudelPattern:
+		return StrudelPattern.reify(fn.call(v))
+	).inner_join().with_hap(func(h: StrudelHap) -> StrudelHap:
+		# 🔴 Внутри значения лежит СОБЫТИЕ, а не готовое значение: список от
+		# `collect` состоит из событий, и правило возвращает одно из них.
+		# Разворачиваем и подмешиваем его окружение.
+		if not h.value is StrudelHap:
+			return h
+		var inner: StrudelHap = h.value
+		var ctx: Dictionary = (h.context as Dictionary).duplicate()
+		for k in inner.context:
+			if not ctx.has(k):
+				ctx[k] = inner.context[k]
+		return StrudelHap.new(h.whole, h.part, inner.value, ctx)
+	)
+
+
+static func voicings(pat: StrudelPattern, dictionary: Variant) -> StrudelPattern:
+	## Устаревший путь: символы аккордов → ноты с ПЛАВНЫМ ВЕДЕНИЕМ голосов.
+	##
+	## 🔴 Память о прошлой раскладке общая на всю игру — так и в оригинале
+	## (`voicings.mjs:145`, «this now has to be global»): `register`
+	## пересобирает функцию на каждый вызов, и местная память обнулялась бы.
+	## Рекомендуемый путь — `voicing`, он без памяти.
+	var name := StrudelUtil.text(dictionary)
+	if name == "":
+		name = "ireal"
+	return pat.fmap(func(value) -> StrudelPattern:
+		var chord_text := StrudelUtil.text(value["chord"]) \
+			if (value is Dictionary and (value as Dictionary).has("chord")) \
+			else StrudelUtil.text(value)
+		var notes := render_voicing({
+			"chord": chord_text,
+			"dictionary": StrudelVoicingTable.dictionary(name),
+			"mode": "below",
+			"anchor": _last_voicing[0] if _last_voicing[0] != null else "c5",
+		})
+		if notes.is_empty():
+			return StrudelPattern.silence()
+		_last_voicing[0] = notes[notes.size() - 1]
+		var layers: Array = []
+		for n in notes:
+			layers.append(StrudelPattern.pure(n))
+		return StrudelPattern.stack(layers)
+	).outer_join()
+
+
+## Последняя сыгранная раскладка — к ней подтягивается следующая.
+static var _last_voicing: Array = [null]
+
+
 static func arp(pat: StrudelPattern, indices: Variant) -> StrudelPattern:
 	## Разбивает созвучие на голоса по номерам.
 	var index_pat := StrudelPattern.reify(indices)

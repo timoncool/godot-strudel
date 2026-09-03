@@ -243,6 +243,46 @@ const _METHODS := {
 	"fit": 1, "slice": 1, "splice": 1, "bite": 1,
 	"hush": 1, "reset": 1, "restart": 1, "resetAll": 1, "restartAll": 1,
 	"csound": 1,
+	# — куски круга и вложенные паттерны —
+	"chunkInto": 1, "chunkinto": 1, "chunkBackInto": 1, "chunkbackinto": 1,
+	"fastChunk": 1, "fastchunk": 1, "slowChunk": 1, "slowchunk": 1,
+	"chunkback": 1, "unjoin": 1, "into": 1,
+	"compressSpan": 1, "compressspan": 1, "focusSpan": 1, "focusspan": 1,
+	"zoomArc": 1, "zoomarc": 1,
+	"echowith": 1, "stutWith": 1, "stutwith": 1,
+	"plyWith": 1, "plywith": 1, "plyForEach": 1, "plyforeach": 1,
+	"juxFlip": 1, "juxflip": 1, "flux": 1,
+	"juxFlipBy": 1, "juxflipby": 1, "fluxBy": 1, "fluxby": 1,
+	"collect": 1, "xfade": 1, "beat": 1, "ratio": 1, "log2": 1, "cpm": 1,
+	"hsl": 1, "hsla": 1, "bypass": 1, "morph": 1,
+	# — эвклидовы —
+	"bjork": 1, "euclidish": 1, "eish": 1, "euclidrot": 1,
+	# — выбор по указателю —
+	"pick": 1, "pickmod": 1, "pickOut": 1, "pickmodOut": 1,
+	"pickRestart": 1, "pickmodRestart": 1, "pickReset": 1, "pickmodReset": 1,
+	"inhabit": 1, "pickSqueeze": 1, "inhabitmod": 1, "pickmodSqueeze": 1,
+	"pickF": 1, "pickmodF": 1,
+	# — вероятностное и клавиши —
+	"degradeByWith": 1, "keyDown": 1, "whenKey": 1,
+	# — огибающие и параметры пачкой —
+	"adsr": 1, "ad": 1, "ds": 1, "ar": 1, "control": 1, "as": 1, "scrub": 1,
+	"lfo": 1, "env": 1, "bmod": 1, "modulate": 1,
+	# — пошаговые —
+	"take": 1, "drop": 1, "grow": 1, "shrink": 1,
+	"growlist": 1, "shrinklist": 1, "tour": 1, "zip": 1,
+	"s_add": 1, "s_sub": 1, "s_expand": 1, "s_extend": 1, "s_contract": 1,
+	"s_polymeter": 1, "s_taper": 1, "s_taperlist": 1, "s_tour": 1, "s_zip": 1,
+	"stepBind": 1, "stepJoin": 1,
+	# — тембр —
+	"partials": 1, "phases": 1, "FX": 1,
+	# — тональное —
+	"voicings": 1, "trans": 1, "_transpose": 1,
+	# — живой код и внешний мир —
+	"choose": 1, "choose2": 1, "p": 1, "q": 1,
+	"d1": 1, "d2": 1, "d3": 1, "d4": 1, "d5": 1,
+	"d6": 1, "d7": 1, "d8": 1, "d9": 1,
+	"timeline": 1, "worklet": 1, "speak": 1, "sysex": 1,
+	"onTriggerTime": 1,
 }
 
 
@@ -411,6 +451,140 @@ static func method_call(rt, pat: StrudelPattern, name: String, args: Array) -> V
 		"queryArc": return pat.query_arc(_arg(args, 0), _arg(args, 1))
 		"firstCycle": return pat.first_cycle()
 
+	match name:
+		# — куски круга —
+		"chunkInto", "chunkinto":
+			return pat.chunk_into(int(_f(_arg(args, 0))), _fn1(args, 1))
+		"chunkBackInto", "chunkbackinto":
+			return pat.chunk_back_into(int(_f(_arg(args, 0))), _fn1(args, 1))
+		"fastChunk", "fastchunk":
+			return pat.chunk(int(_f(_arg(args, 0))), _fn1(args, 1), false, true)
+		"slowChunk", "slowchunk":
+			return pat.chunk(int(_f(_arg(args, 0))), _fn1(args, 1))
+		"chunkback":
+			return pat.chunk(int(_f(_arg(args, 0))), _fn1(args, 1), true)
+		"unjoin":
+			return pat.unjoin(_pat(_arg(args, 0)),
+				_fn1(args, 1) if args.size() > 1 else Callable())
+		"into":
+			return pat.into(_pat(_arg(args, 0)),
+				_fn1(args, 1) if args.size() > 1 else Callable())
+		"compressSpan", "compressspan": return pat.compress_span(_arg(args, 0))
+		"focusSpan", "focusspan": return pat.focus_span(_arg(args, 0))
+		"zoomArc", "zoomarc": return pat.zoom_arc(_arg(args, 0))
+		"echowith", "stutWith", "stutwith":
+			return pat.echo_with(_f(_arg(args, 0)), _arg(args, 1), _fn2(args, 2))
+		"plyWith", "plywith":
+			return pat.ply_with(_arg(args, 0), _fn1(args, 1))
+		"plyForEach", "plyforeach":
+			return pat.ply_for_each(_arg(args, 0), _fn2(args, 1))
+		"juxFlip", "juxflip", "flux":
+			return pat.jux_flip(_fn1(args, 0))
+		"juxFlipBy", "juxflipby", "fluxBy", "fluxby":
+			return pat.jux_flip_by(_arg(args, 0), _fn1(args, 1))
+		"collect": return pat.collect()
+		"xfade": return pat.xfade(_arg(args, 0), _arg(args, 1))
+		"beat": return pat.beat(_arg(args, 0), _arg(args, 1))
+		"ratio": return pat.ratio_()
+		"log2": return pat.log2_()
+		"cpm": return pat.cpm(_arg(args, 0))
+		"hsl": return pat.hsl(_arg(args, 0), _arg(args, 1), _arg(args, 2))
+		"hsla": return pat.hsla(_arg(args, 0), _arg(args, 1), _arg(args, 2), _arg(args, 3))
+		"bypass": return pat.bypass(_arg(args, 0))
+
+		# — эвклидовы —
+		"bjork": return StrudelEuclid.bjork(pat, _arg(args, 0))
+		"euclidish", "eish":
+			return StrudelEuclid.apply_ish(pat, int(_f(_arg(args, 0))),
+				int(_f(_arg(args, 1))), _arg(args, 2))
+		"euclidrot":
+			return StrudelEuclid.apply(pat, int(_f(_arg(args, 0))),
+				int(_f(_arg(args, 1))), int(_f(_arg(args, 2))))
+
+		# — выбор по указателю —
+		"pick": return StrudelPick.pick(_arg(args, 0), pat)
+		"pickmod": return StrudelPick.pickmod(_arg(args, 0), pat)
+		"pickOut": return StrudelPick.pick_out(_arg(args, 0), pat)
+		"pickmodOut": return StrudelPick.pickmod_out(_arg(args, 0), pat)
+		"pickRestart": return StrudelPick.pick_restart(_arg(args, 0), pat)
+		"pickmodRestart": return StrudelPick.pickmod_restart(_arg(args, 0), pat)
+		"pickReset": return StrudelPick.pick_reset(_arg(args, 0), pat)
+		"pickmodReset": return StrudelPick.pickmod_reset(_arg(args, 0), pat)
+		"inhabit", "pickSqueeze": return StrudelPick.inhabit(_arg(args, 0), pat)
+		"inhabitmod", "pickmodSqueeze": return StrudelPick.inhabitmod(_arg(args, 0), pat)
+		"pickF": return StrudelPick.pick_f(pat, _arg(args, 0), _fn_list(_arg(args, 1)))
+		"pickmodF": return StrudelPick.pickmod_f(pat, _arg(args, 0), _fn_list(_arg(args, 1)))
+
+		# — вероятностное и клавиши —
+		"degradeByWith":
+			return StrudelSignal.degrade_by_with(pat, _arg(args, 0), _arg(args, 1))
+		"keyDown": return StrudelSignal.key_down(pat)
+		"whenKey": return StrudelSignal.when_key(pat, _arg(args, 0), _fn1(args, 1))
+
+		# — огибающие и параметры пачкой —
+		"adsr": return StrudelControls.adsr(pat, _arg(args, 0))
+		"ad": return StrudelControls.ad(pat, _arg(args, 0))
+		"ds": return StrudelControls.ds(pat, _arg(args, 0))
+		"ar": return StrudelControls.ar(pat, _arg(args, 0))
+		"control": return StrudelControls.control(pat, _arg(args, 0))
+		"as": return StrudelControls.as_(pat, _arg(args, 0))
+		"scrub": return StrudelControls.scrub(pat, _arg(args, 0))
+		"lfo": return StrudelModulation.modulate(pat, "lfo", _arg(args, 0), _arg(args, 1))
+		"env": return StrudelModulation.modulate(pat, "env", _arg(args, 0), _arg(args, 1))
+		"bmod": return StrudelModulation.modulate(pat, "bmod", _arg(args, 0), _arg(args, 1))
+		"modulate":
+			return StrudelModulation.modulate(pat, StrudelUtil.text(_arg(args, 0)),
+				_arg(args, 1), _arg(args, 2))
+
+		# — пошаговые —
+		"take", "s_add": return StrudelStepwise.take(pat, _arg(args, 0))
+		"drop", "s_sub": return StrudelStepwise.drop(pat, _arg(args, 0))
+		"grow": return StrudelStepwise.grow(pat, _arg(args, 0))
+		"shrink", "s_taper": return StrudelStepwise.shrink(pat, _arg(args, 0))
+		"growlist": return StrudelStepwise.growlist(pat, _arg(args, 0))
+		"shrinklist", "s_taperlist": return StrudelStepwise.shrinklist(pat, _arg(args, 0))
+		"tour", "s_tour": return StrudelStepwise.tour(pat, _flat(args))
+		"zip", "s_zip": return StrudelStepwise.zip([pat] + _flat(args))
+		"s_expand": return pat.expand(_arg(args, 0))
+		"s_extend": return pat.extend(_arg(args, 0))
+		"s_contract": return pat.contract(_arg(args, 0))
+		"s_polymeter": return StrudelPattern.polymeter([pat] + _flat(args))
+		"stepJoin": return pat.step_join()
+		"stepBind": return pat.step_bind(_fn1(args, 0))
+
+		# — тембр —
+		"partials": return pat.partials(_arg(args, 0))
+		"phases": return pat.phases(_arg(args, 0))
+		"FX": return pat.fx(args)
+
+		# — живой код и внешний мир —
+		"choose": return StrudelSignal.choose_with(pat, _flat(args))
+		"choose2":
+			return StrudelSignal.choose_with(pat.from_bipolar(), _flat(args))
+		"p", "d1", "d2", "d3", "d4", "d5", "d6", "d7", "d8", "d9":
+			return pat.p(_arg(args, 0) if not args.is_empty() else name)
+		"q": return pat.q()
+		"timeline": return pat.timeline(_arg(args, 0))
+		"worklet": return pat.worklet(_arg(args, 0), args.slice(1))
+		"speak":
+			return StrudelSpeech.speak(pat, _arg(args, 0), _arg(args, 1))
+		"sysex":
+			var pair: Variant = _arg(args, 0)
+			if not pair is Array or (pair as Array).size() < 2:
+				push_warning("Strudel: sysex ждёт пару [номер, данные]")
+				return pat
+			return StrudelControls.apply(
+				StrudelControls.apply(pat, "sysexid", pair[0]), "sysexdata", pair[1])
+		"onTriggerTime":
+			# Отклик на событие по времени. Своих часов у паттерна нет —
+			# события отдаёт игра, — поэтому здесь партия просто едет дальше.
+			return pat
+		"arpWith": return StrudelTonal.arp_with(pat, _fn1(args, 0))
+
+		# — тональное —
+		"voicings": return StrudelTonal.voicings(pat, _arg(args, 0))
+		"trans", "_transpose": return StrudelTonal.transpose(pat, _arg(args, 0))
+
 	# Параметр звука: .gain(0.5), .lpf(600), .s("piano")…
 	if StrudelControls.is_control(name):
 		return StrudelControls.apply(pat, name, _arg(args, 0))
@@ -441,6 +615,28 @@ static func _s(v: Variant) -> String:
 		if not haps.is_empty():
 			return str((haps[0] as StrudelHap).value)
 	return str(v)
+
+
+static func _fn_list(v: Variant) -> Variant:
+	## Список или таблица ДЕЙСТВИЙ для pickF: стрелочные функции из кода
+	## приходят как Callable с одним доводом-списком, а паттерну нужен
+	## обычный вызов.
+	var wrap := func(x: Variant) -> Variant:
+		if x is Callable:
+			var c: Callable = x
+			return func(p): return c.call([p])
+		return x
+	if v is Array:
+		var out: Array = []
+		for x in v:
+			out.append(wrap.call(x))
+		return out
+	if v is Dictionary:
+		var d := {}
+		for k in v:
+			d[k] = wrap.call((v as Dictionary)[k])
+		return d
+	return wrap.call(v)
 
 
 static func _arg(args: Array, i: int) -> Variant:

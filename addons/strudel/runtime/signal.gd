@@ -198,11 +198,58 @@ static func seed_(pat: StrudelPattern, value: Variant) -> StrudelPattern:
 # Прореживание
 # ═══════════════════════════════════════════════════════════════════════════
 
-static func degrade_by_with(pat: StrudelPattern, with_pat: StrudelPattern, amount: float) -> StrudelPattern:
+static func _degrade_with(pat: StrudelPattern, with_pat: StrudelPattern, amount: float) -> StrudelPattern:
 	## Основа всего вероятностного: событие остаётся, если случайное > amount.
 	return pat.fmap(func(a) -> Callable:
 		return func(_b): return a
 	).app_left(with_pat.filter_values(func(v): return float(v) > amount))
+
+
+static func degrade_by_with(pat: StrudelPattern, with_pat: Variant,
+		amount: Variant) -> StrudelPattern:
+	## Прореживание ЧУЖИМ источником случайности — основа `someCyclesBy` и
+	## всего, где нужен свой ритм выпадения.
+	var src := StrudelPattern.reify(with_pat)
+	return pat._patternify([amount], func(vals: Array) -> StrudelPattern:
+		return _degrade_with(pat, src, StrudelPattern._num(vals[0]))
+	)
+
+
+## Как имена клавиш браузера зовутся в Godot. Остальные `OS.find_keycode_from_string`
+## разбирает сам.
+const KEY_ALIASES := {
+	"control": "Ctrl", "arrowleft": "Left", "arrowright": "Right",
+	"arrowup": "Up", "arrowdown": "Down", " ": "Space", "esc": "Escape",
+}
+
+
+static func is_key_down(keyname: Variant) -> bool:
+	## Зажаты ли ВСЕ названные клавиши. Имена как в браузере: «Control:j»
+	## значит Control И j одновременно.
+	var names: Array = keyname if keyname is Array else [keyname]
+	for raw in names:
+		for part in StrudelUtil.text(raw).split(":", false):
+			var name := String(part).strip_edges()
+			var alias := String(KEY_ALIASES.get(name.to_lower(), name))
+			var code := OS.find_keycode_from_string(alias)
+			if code == KEY_NONE or not Input.is_key_pressed(code):
+				return false
+	return true
+
+
+static func key_down(pat: StrudelPattern) -> StrudelPattern:
+	## Значения-имена клавиш → «зажата или нет». Читается В МОМЕНТ ЗАПРОСА,
+	## поэтому годится как живой переключатель прямо в игре.
+	return pat.fmap(func(v) -> bool: return is_key_down(v))
+
+
+static func when_key(pat: StrudelPattern, keyname: Variant, fn: Callable) -> StrudelPattern:
+	## Применить действие, пока клавиша зажата.
+	##
+	## 🔴 Снимок берётся ОДИН РАЗ, при сборке паттерна, — так в оригинале
+	## (`signal.mjs`, `pat.when(_keyDown(input), func)`). Живой отклик даёт
+	## `key_down`, а не это.
+	return pat.when_(is_key_down(keyname), fn)
 
 
 static func degrade_by(pat: StrudelPattern, amount: Variant) -> StrudelPattern:
@@ -211,7 +258,7 @@ static func degrade_by(pat: StrudelPattern, amount: Variant) -> StrudelPattern:
 	## .5 .1» превращалась в ноль, и не выбрасывалось ничего. На треке
 	## amensister это давало лишние двадцать четыре события.
 	return pat._patternify([amount], func(vals: Array) -> StrudelPattern:
-		return degrade_by_with(pat, rand(), StrudelPattern._num(vals[0]))
+		return _degrade_with(pat, rand(), StrudelPattern._num(vals[0]))
 	)
 
 
@@ -223,7 +270,7 @@ static func undegrade_by(pat: StrudelPattern, amount: Variant) -> StrudelPattern
 	## Обратное degradeBy: остаются ровно те события, что там выпадали.
 	## Доля так же патернифицируется — см. degrade_by.
 	return pat._patternify([amount], func(vals: Array) -> StrudelPattern:
-		return degrade_by_with(pat, rand().fmap(func(r): return 1.0 - float(r)),
+		return _degrade_with(pat, rand().fmap(func(r): return 1.0 - float(r)),
 			StrudelPattern._num(vals[0]))
 	)
 
@@ -274,8 +321,8 @@ static func some_cycles_by(pat: StrudelPattern, probability: Variant, fn: Callab
 	return StrudelPattern.reify(probability).fmap(func(x) -> StrudelPattern:
 		var p := float(x)
 		return StrudelPattern.stack([
-			degrade_by_with(pat, rand()._segment(1), p),
-			fn.call(degrade_by_with(pat, rand().fmap(func(r): return 1.0 - float(r))._segment(1), 1.0 - p))
+			_degrade_with(pat, rand()._segment(1), p),
+			fn.call(_degrade_with(pat, rand().fmap(func(r): return 1.0 - float(r))._segment(1), 1.0 - p))
 		])
 	).inner_join()
 

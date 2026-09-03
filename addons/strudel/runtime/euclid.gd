@@ -83,6 +83,32 @@ static func apply(pat: StrudelPattern, pulses: int, steps: int, rotation: int = 
 	return pat.struct_([StrudelPattern.sequence(euclid_rot(pulses, steps, rotation))])
 
 
+static func bjork(pat: StrudelPattern, euc: Variant) -> StrudelPattern:
+	## Рисунок ОДНИМ доводом: `[доли, шаги, поворот]`. Число вместо списка
+	## значит «столько долей из стольких же шагов» — то есть ровный ряд.
+	var list: Array = euc if euc is Array else [euc]
+	if list.is_empty():
+		return pat
+	var pulses := int(StrudelPattern._num(list[0]))
+	var steps := int(StrudelPattern._num(list[1])) if list.size() > 1 else pulses
+	var rotation := int(StrudelPattern._num(list[2])) if list.size() > 2 else 0
+	return apply(pat, pulses, steps, rotation)
+
+
+static func apply_ish(pat: StrudelPattern, pulses: int, steps: int,
+		groove: Variant) -> StrudelPattern:
+	## `euclidish` — переход между эвклидовым рисунком и ровным пульсом.
+	##
+	## 🔴 Ноль даёт ЧИСТЫЙ euclid, единица — ровные доли; между ними доли
+	## ползут от эвклидовых мест к ровным. Приём Малкольма Браффа: качание
+	## задаётся не сдвигом отдельных нот, а натяжением всей сетки.
+	var even: Array = []
+	for _i in pulses:
+		even.append(1)
+	var morphed := StrudelPattern.morph(bjorklund(pulses, steps), even, groove)
+	return pat.struct_([morphed]).set_steps(StrudelFraction.new(steps))
+
+
 static func apply_legato(pat: StrudelPattern, pulses: int, steps: int, rotation: int = 0) -> StrudelPattern:
 	## Как euclid, но нота тянется до следующей — без пауз.
 	if pulses < 1:

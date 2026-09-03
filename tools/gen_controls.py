@@ -16,11 +16,11 @@ SRC = Path(r"D:/Projects/TEMP/bulka/packages/core/controls.mjs")
 OUT = Path(__file__).resolve().parent.parent / "addons" / "strudel" / "runtime" / "controls_table.gd"
 
 CALL = re.compile(
-    r"registerControl\(\s*(\[[^\]]*\]|'[^']*'|\"[^\"]*\")\s*((?:,\s*(?:'[^']*'|\"[^\"]*\")\s*)*)\)",
+    r"registerControl\(\s*(\[[^\]]*\]|'[^']*'|\"[^\"]*\")\s*((?:,\s*(?:'[^']*'|\"[^\"]*\")\s*)*),?\s*\)",
     re.S,
 )
 MULTI = re.compile(
-    r"registerMultiControl\(\s*(\[[^\]]*\]|'[^']*'|\"[^\"]*\")\s*,\s*(\d+)\s*((?:,\s*(?:'[^']*'|\"[^\"]*\")\s*)*)\)",
+    r"registerMultiControl\(\s*(\[[^\]]*\]|'[^']*'|\"[^\"]*\")\s*,\s*(\d+)\s*((?:,\s*(?:'[^']*'|\"[^\"]*\")\s*)*),?\s*\)",
     re.S,
 )
 STR = re.compile(r"['\"]([^'\"]*)['\"]")

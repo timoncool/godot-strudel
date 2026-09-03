@@ -472,10 +472,14 @@ static func pure(value: Variant) -> StrudelPattern:
 static func reify(thing: Variant) -> StrudelPattern:
 	## Приводит что угодно к паттерну. Строка разбирается как mini-нотация,
 	## если разборщик подключён (см. set_string_parser).
+	##
+	## 🔴 СПИСОК остаётся ОДНИМ значением, а не превращается в ряд
+	## (`pattern.mjs:1409`). Ряд из списка делают только сборщики —
+	## `sequence`, `stack`, `fastcat` и прочие, — и делают это сами
+	## (`_as_pat`). Иначе `.pick(["bd", "sd"])` разбирал бы список как
+	## два события вместо таблицы выбора.
 	if thing is StrudelPattern:
 		return thing
-	if thing is Array:
-		return sequence(thing)
 	if thing is String or thing is StringName:
 		return _mini_parser().call(String(thing))
 	return pure(thing)
@@ -500,11 +504,279 @@ static func _mini_parser() -> Callable:
 	return _string_parser
 
 
+func step_join() -> StrudelPattern:
+	## Пошаговая сшивка паттерна паттернов: круг режется по границам
+	## событий, и куски кладутся встык ПО ШАГАМ, а не по времени.
+	var pp := self
+	var first_steps: Variant = StrudelPattern.stepcat(
+		StrudelPattern._retime(StrudelPattern._slices(pp.query_arc(0, 1)))).steps
+	var result := StrudelPattern.new(func(state: StrudelState) -> Array:
+		var shifted := pp._early(state.span.begin.sam())
+		var whole_cycle := StrudelTimeSpan.new(StrudelFraction.new(0), StrudelFraction.new(1))
+		var haps: Array = shifted.query.call(state.set_span(whole_cycle))
+		var pat := StrudelPattern.stepcat(
+			StrudelPattern._retime(StrudelPattern._slices(haps)))
+		return pat.query.call(state)
+	)
+	result.steps = first_steps
+	return result
+
+
+func step_bind(fn: Callable) -> StrudelPattern:
+	## `fmap` с пошаговой сшивкой.
+	return fmap(fn).step_join()
+
+
+static func _slices(haps: Array) -> Array:
+	## Круг, порезанный по ВСЕМ границам событий. Каждый кусок — пара
+	## [длительность, паттерн из наложенных здесь значений].
+	var points: Array = [StrudelFraction.new(0), StrudelFraction.new(1)]
+	for hap in haps:
+		points.append((hap as StrudelHap).part.begin)
+		points.append((hap as StrudelHap).part.end)
+	var unique: Array = []
+	for p in points:
+		var seen := false
+		for u in unique:
+			if (u as StrudelFraction).eq(p):
+				seen = true
+				break
+		if not seen:
+			unique.append(p)
+	unique.sort_custom(func(a: StrudelFraction, b: StrudelFraction) -> bool:
+		return a.lt(b)
+	)
+
+	var out: Array = []
+	for i in range(unique.size() - 1):
+		var span := StrudelTimeSpan.new(unique[i], unique[i + 1])
+		var layers: Array = []
+		for hap in haps:
+			var h: StrudelHap = hap
+			var sub := span.intersection(h.part)
+			if sub == null:
+				continue
+			var inner: StrudelPattern = h.value if h.value is StrudelPattern \
+				else StrudelPattern.pure(h.value)
+			var ctx: Dictionary = h.context
+			layers.append(inner.with_hap(func(x: StrudelHap) -> StrudelHap:
+				var merged := (x.context as Dictionary).duplicate()
+				for k in ctx:
+					if not merged.has(k):
+						merged[k] = ctx[k]
+				return StrudelHap.new(x.whole, x.part, x.value, merged)
+			))
+		out.append([span.end.sub(span.begin), StrudelPattern.stack(layers)])
+	return out
+
+
+static func _retime(timed: Array) -> Array:
+	## Длительности кусков → ЧИСЛА ШАГОВ.
+	##
+	## 🔴 В оригинале (`_retime`, `pattern.mjs:2988`) обе свёртки написаны с
+	## опечаткой: обратный вызов `filter`/`map` получает вторым доводом
+	## НОМЕР, а не паттерн, поэтому `total_steps` там всегда «не задано».
+	## Итог сводится к правилу «у куска есть свои шаги — берём их, нет —
+	## берём его длительность». Повторяем ровно это: переписать «как
+	## задумано» значит разойтись с Булкой на каждом пошаговом действии.
+	var out: Array = []
+	for pair in timed:
+		var dur: StrudelFraction = pair[0]
+		var pat: StrudelPattern = pair[1]
+		out.append([pat.steps if pat.steps != null else dur, pat])
+	return out
+
+
+static func parray(pats: Array) -> StrudelPattern:
+	## Несколько паттернов → один, значение которого СПИСОК их значений.
+	## Строение — пересечение всех (`appBoth`).
+	var acc := StrudelPattern.pure([])
+	for p in pats:
+		acc = acc.fmap(func(list: Array) -> Callable:
+			return func(v) -> Array: return list + [v]
+		).app_both(StrudelPattern.reify(p))
+	return acc
+
+
+static func _list_pattern(list: Variant) -> StrudelPattern:
+	## Список чисел годится и явным перечнем, и паттерном.
+	return parray(list) if list is Array else StrudelPattern.reify(list)
+
+
+func partials(list: Variant) -> StrudelPattern:
+	## Веса обертонов у встроенных тембров: `s("saw").partials([1,0,1])`.
+	return with_value(func(v) -> Callable:
+		return func(l) -> Dictionary:
+			var d: Dictionary = (v as Dictionary).duplicate() if v is Dictionary else {"value": v}
+			d["partials"] = l
+			return d
+	).app_left(StrudelPattern._list_pattern(list))
+
+
+func phases(list: Variant) -> StrudelPattern:
+	## Фазы обертонов — от 0 до 1. Первая запись это фаза основного тона.
+	return with_value(func(v) -> Callable:
+		return func(l) -> Dictionary:
+			var d: Dictionary = (v as Dictionary).duplicate() if v is Dictionary else {"value": v}
+			d["phases"] = l
+			return d
+	).app_left(StrudelPattern._list_pattern(list))
+
+
+func fx(effects: Array) -> StrudelPattern:
+	## Цепочка эффектов: `.FX(lpf(500), distort(1))`. Каждый довод —
+	## ПАТТЕРН настроек, а не число; порядок в цепочке и есть порядок
+	## обработки. Внешние эффекты применяются ПОСЛЕ.
+	var pats: Array = []
+	for e in effects:
+		pats.append(StrudelPattern.reify(e))
+	return with_value(func(v) -> Callable:
+		return func(v_eff) -> Dictionary:
+			var d: Dictionary = (v as Dictionary).duplicate() if v is Dictionary else {"value": v}
+			var chain: Array = (d.get("FX", []) as Array).duplicate()
+			chain.append_array(v_eff if v_eff is Array else [v_eff])
+			d["FX"] = chain
+			return d
+	).app_left(StrudelPattern.parray(pats))
+
+
+## Метки временных дорожек: куда сдвинута каждая. Живёт между вызовами —
+## на этом и держится приём (`core/impure.mjs`, файл так и назван «стыдным»).
+static var _timelines: Dictionary = {}
+
+
+static func reset_timelines() -> void:
+	## Забыть все дорожки. Зовётся при сборке нового листа.
+	_timelines.clear()
+
+
+func timeline(tpat: Variant) -> StrudelPattern:
+	## Переключение паттерна между ДОРОЖКАМИ времени.
+	##
+	## Приём для живого кода: пока номер дорожки не менялся, партия идёт
+	## своим чередом; новый номер запоминает, с какого места её подхватить,
+	## и партия продолжается оттуда, а не с начала.
+	##
+	## 🔴 Ноль — особая дорожка: она всегда без сдвига.
+	var me := self
+	var tp := StrudelPattern.reify(tpat)
+	var result := StrudelPattern.new(func(state: StrudelState) -> Array:
+		# Запрос от часов игры или от показывалки — от этого зависит, можно
+		# ли ЗАПОМИНАТЬ сдвиг: рисование не должно двигать музыку.
+		var live: bool = state.controls.has("cyclist")
+		var out: Array = []
+		for timehap in tp.query.call(state):
+			var th: StrudelHap = timehap
+			var tlid := StrudelUtil.text(th.value)
+			var offset: StrudelFraction
+			if StrudelPattern._num(th.value) == 0.0 and tlid != "":
+				offset = StrudelFraction.new(0)
+			elif _timelines.has(tlid):
+				offset = _timelines[tlid]
+			else:
+				var arc: StrudelTimeSpan = th.whole if th.whole != null else th.part
+				if not live or state.span.begin.lt(arc.midpoint()):
+					offset = arc.begin
+				else:
+					# Дорожку увидели уже за серединой её отрезка — цепляемся
+					# к концу: так следующая партия «подхватывается» ровно.
+					offset = arc.end
+			if live:
+				_timelines[tlid] = offset
+			for h in me._late(offset).query.call(state.set_span(th.part)):
+				var hh: StrudelHap = h
+				var ctx: Dictionary = (hh.context as Dictionary).duplicate()
+				for k in th.context:
+					if not ctx.has(k):
+						ctx[k] = th.context[k]
+				out.append(StrudelHap.new(hh.whole, hh.part, hh.value, ctx))
+		return out
+	)
+	result.steps = steps
+	return result
+
+
+func worklet(src: Variant, inputs: Array) -> StrudelPattern:
+	## Свой звуковой узел исходником. Плагин своего узла не заводит, но
+	## описание кладёт в событие как есть — игра вольна его прочитать.
+	var pats: Array = []
+	for i in inputs:
+		pats.append(StrudelPattern.reify(i))
+	return outer_bind(func(v) -> StrudelPattern:
+		return StrudelPattern.parray(pats).with_value(func(v_input) -> Dictionary:
+			var d: Dictionary = (v as Dictionary).duplicate() if v is Dictionary else {"value": v}
+			var chain: Array = (d.get("workletInputs", []) as Array).duplicate()
+			chain.append_array(v_input if v_input is Array else [v_input])
+			d["workletSrc"] = src
+			d["workletInputs"] = chain
+			return d
+		)
+	)
+
+
+func p(id: Variant) -> StrudelPattern:
+	## Гнездо вывода живого кода. Имя, начинающееся или кончающееся
+	## подчёркиванием, ГЛУШИТ партию — так её выключают, не стирая.
+	var name := StrudelUtil.text(id)
+	if name.begins_with("_") or name.ends_with("_"):
+		return StrudelPattern.silence()
+	return self
+
+
+func q(_id: Variant = null) -> StrudelPattern:
+	## Второе гнездо: всегда тишина. Им глушат партию целиком.
+	return StrudelPattern.silence()
+
+
+static func morph(from_list: Array, to_list: Array, by: Variant) -> StrudelPattern:
+	## Перетекание одного рисунка в другой: доли ползут со своих мест на
+	## чужие. Доля `by` — от нуля (первый рисунок) до единицы (второй).
+	var b := StrudelFraction.of(by)
+	var dur := StrudelFraction.new(1).div(StrudelFraction.new(from_list.size()))
+	var from_pos := _positions(from_list)
+	var to_pos := _positions(to_list)
+	var arcs: Array = []
+	for i in mini(from_pos.size(), to_pos.size()):
+		var pa: StrudelFraction = from_pos[i]
+		var pb: StrudelFraction = to_pos[i]
+		var begin := b.mul(pb.sub(pa)).add(pa)
+		arcs.append(StrudelTimeSpan.new(begin, begin.add(dur)))
+	return StrudelPattern.new(func(state: StrudelState) -> Array:
+		var cycle := state.span.begin.sam()
+		var cycle_arc := state.span.cycle_arc()
+		var out: Array = []
+		for whole in arcs:
+			var span: StrudelTimeSpan = whole
+			var part := span.intersection(cycle_arc)
+			if part == null:
+				continue
+			out.append(StrudelHap.new(
+				span.with_time(func(x: StrudelFraction) -> StrudelFraction: return x.add(cycle)),
+				part.with_time(func(x: StrudelFraction) -> StrudelFraction: return x.add(cycle)),
+				true, {}))
+		return out
+	).split_queries()
+
+
+static func _positions(list: Array) -> Array:
+	## Места единиц в рисунке, долями круга.
+	var out: Array = []
+	for i in list.size():
+		if truthy(list[i]):
+			out.append(StrudelFraction.new(i).div(StrudelFraction.new(list.size())))
+	return out
+
+
+static func _as_pat(thing: Variant) -> StrudelPattern:
+	## Довод сборщика ряда: список здесь — это ПОДРЯД, а не одно значение.
+	return sequence(thing) if thing is Array else reify(thing)
+
+
 static func stack(pats: Array) -> StrudelPattern:
 	## Всё звучит одновременно.
 	var list: Array = []
 	for p in pats:
-		list.append(reify(p))
+		list.append(_as_pat(p))
 	var result := StrudelPattern.new(func(state: StrudelState) -> Array:
 		var out: Array = []
 		for p in list:
@@ -522,7 +794,7 @@ static func slowcat(pats: Array) -> StrudelPattern:
 	## По одному паттерну на цикл.
 	var list: Array = []
 	for p in pats:
-		list.append(sequence(p) if p is Array else reify(p))
+		list.append(_as_pat(p))
 	if list.is_empty():
 		return silence()
 	if list.size() == 1:
@@ -554,7 +826,7 @@ static func slowcat_prime(pats: Array) -> StrudelPattern:
 	## Как slowcat, но циклы пропускаются (нужен для every/lastOf).
 	var list: Array = []
 	for p in pats:
-		list.append(reify(p))
+		list.append(_as_pat(p))
 	if list.is_empty():
 		return silence()
 	return StrudelPattern.new(func(state: StrudelState) -> Array:
@@ -589,9 +861,9 @@ static func stepcat(time_pats: Array) -> StrudelPattern:
 	var pairs: Array = []
 	for x in time_pats:
 		if x is Array and x.size() == 2:
-			pairs.append([StrudelFraction.of(x[0]), reify(x[1])])
+			pairs.append([StrudelFraction.of(x[0]), _as_pat(x[1])])
 		else:
-			var p := reify(x)
+			var p := _as_pat(x)
 			pairs.append([p.steps if p.steps != null else StrudelFraction.new(1), p])
 
 	if pairs.size() == 1:
@@ -630,7 +902,7 @@ static func arrange(sections: Array) -> StrudelPattern:
 		total += float(s[0])
 	var scaled: Array = []
 	for s in sections:
-		scaled.append([StrudelFraction.of(s[0]), reify(s[1])._fast(s[0])])
+		scaled.append([StrudelFraction.of(s[0]), _as_pat(s[1])._fast(s[0])])
 	return stepcat(scaled)._slow(total)
 
 
@@ -638,7 +910,7 @@ static func polymeter(pats: Array, steps_per_cycle: Variant = null) -> StrudelPa
 	## Выравнивает шаги паттернов — получается полиметрия.
 	var list: Array = []
 	for p in pats:
-		list.append(reify(p))
+		list.append(_as_pat(p))
 	var with_steps: Array = []
 	for p in list:
 		if p.has_steps():
@@ -686,7 +958,7 @@ static func _lcm_steps(list: Array) -> StrudelFraction:
 func _patternify(args: Array, fn: Callable, join_mode: String = "inner") -> StrudelPattern:
 	var pats: Array = []
 	for a in args:
-		pats.append(StrudelPattern.reify(a))
+		pats.append(StrudelPattern._as_pat(a))
 
 	var all_pure := true
 	for p in pats:
@@ -1146,8 +1418,16 @@ func ribbon(offset: Variant, cycles: Variant) -> StrudelPattern:
 	return early(offset).restart([StrudelPattern.pure(1)._slow(cycles)])
 
 
-func apply(fn: Callable) -> StrudelPattern:
-	return fn.call(self)
+func apply(fn: Variant) -> StrudelPattern:
+	## Применить действие. Довод может быть и ПАТТЕРНОМ действий — на этом
+	## держится pickF: номер выбирает, какое действие сейчас применить.
+	if fn is Callable:
+		return (fn as Callable).call(self)
+	var me := self
+	return _patternify([fn], func(vals: Array) -> StrudelPattern:
+		var f: Variant = vals[0]
+		return (f as Callable).call(me) if f is Callable else me
+	)
 
 
 func apply_n(n: int, fn: Callable) -> StrudelPattern:
@@ -1195,6 +1475,261 @@ func within(from_pos: Variant, to_pos: Variant, fn: Callable) -> StrudelPattern:
 # ═══════════════════════════════════════════════════════════════════════════
 # Нарезка сэмплов
 # ═══════════════════════════════════════════════════════════════════════════
+
+func unjoin(pieces: StrudelPattern, fn: Callable = Callable()) -> StrudelPattern:
+	## Разбить паттерн на куски по ДВОИЧНОМУ паттерну: где «истина», кусок
+	## зацикливается сам в себе (`ribbon`) и к нему применяется действие.
+	var me := self
+	return pieces.with_hap(func(hap: StrudelHap) -> StrudelHap:
+		return hap.with_value(func(v) -> StrudelPattern:
+			if not StrudelPattern.truthy(v):
+				return me
+			var piece := me.ribbon(hap.whole.begin, hap.whole.duration())
+			return fn.call(piece) if fn.is_valid() else piece
+		)
+	)
+
+
+func into(pieces: StrudelPattern, fn: Callable = Callable()) -> StrudelPattern:
+	## `unjoin` со сшиванием обратно.
+	return unjoin(pieces, fn).inner_join()
+
+
+func chunk_into(n: int, fn: Callable) -> StrudelPattern:
+	## Как `chunk`, но действие применяется к ЗАЦИКЛЕННОЙ доле исходника.
+	var binary: Array = [true]
+	for _i in n - 1:
+		binary.append(false)
+	return into(StrudelPattern.fastcat(binary)._iter(n, true), fn)
+
+
+func chunk_back_into(n: int, fn: Callable) -> StrudelPattern:
+	## `chunk_into` в обратную сторону.
+	var binary: Array = [true]
+	for _i in n - 1:
+		binary.append(false)
+	return into(StrudelPattern.fastcat(binary)._iter(n)._early(1), fn)
+
+
+func ply_with(factor: Variant, fn: Callable) -> StrudelPattern:
+	## Повторить каждое событие N раз, применяя действие НАКОПИТЕЛЬНО:
+	## первый раз без изменений, второй — раз, третий — дважды.
+	var me := self
+	return _patternify([factor], func(vals: Array) -> StrudelPattern:
+		var count := int(StrudelPattern._num(vals[0]))
+		var result := me.fmap(func(x) -> StrudelPattern:
+			var parts: Array = []
+			for i in count:
+				parts.append(StrudelPattern.apply_n_to(StrudelPattern.pure(x), i, fn))
+			return StrudelPattern.cat(parts)._fast(count)
+		).squeeze_join()
+		result.steps = null if me.steps == null else StrudelFraction.of(count).mul(me.steps)
+		return result
+	)
+
+
+func ply_for_each(factor: Variant, fn: Callable) -> StrudelPattern:
+	## Как `ply_with`, но действию отдаётся НОМЕР повтора — первый повтор
+	## всегда чистый, дальше `fn(pure(x), i)`.
+	var me := self
+	return _patternify([factor], func(vals: Array) -> StrudelPattern:
+		var count := int(StrudelPattern._num(vals[0]))
+		var result := me.fmap(func(x) -> StrudelPattern:
+			var parts: Array = [StrudelPattern.pure(x)]
+			for i in range(1, count):
+				parts.append(fn.call(StrudelPattern.pure(x), i))
+			return StrudelPattern.cat([StrudelPattern.cat(parts)])._fast(count)
+		).squeeze_join()
+		result.steps = null if me.steps == null else StrudelFraction.of(count).mul(me.steps)
+		return result
+	)
+
+
+func jux_flip_by(amount: Variant, fn: Callable) -> StrudelPattern:
+	## `jux_by`, но КАЖДЫЙ ЦИКЛ уши меняются местами.
+	var by := StrudelFraction.of(amount).to_float()
+	return _jux_by_pat(StrudelPattern.slowcat([by, -by]), fn)
+
+
+func jux_flip(fn: Callable) -> StrudelPattern:
+	## `jux` с обменом ушей каждый цикл.
+	return jux_flip_by(1, fn)
+
+
+func _jux_by_pat(amount: StrudelPattern, fn: Callable) -> StrudelPattern:
+	var me := self
+	return amount.fmap(func(v) -> StrudelPattern:
+		return me.jux_by(v, fn)
+	).inner_join()
+
+
+func collect() -> StrudelPattern:
+	## Собрать ОДНОВРЕМЕННЫЕ события в одно, значение — список событий.
+	## Так работают аккордовые операции: `.collect()` даёт «столбик».
+	return with_haps(func(haps: Array, _state) -> Array:
+		var groups: Array = []
+		for hap in haps:
+			var placed := false
+			for g in groups:
+				if (g[0] as StrudelHap).span_equals(hap):
+					g.append(hap)
+					placed = true
+					break
+			if not placed:
+				groups.append([hap])
+		var out: Array = []
+		for g in groups:
+			var first: StrudelHap = g[0]
+			out.append(StrudelHap.new(first.whole, first.part, g, {}))
+		return out
+	)
+
+
+func xfade(pos: Variant, other: Variant) -> StrudelPattern:
+	## Перекрёстное затухание: слева этот паттерн, справа другой.
+	return StrudelPattern.xfade_between(self, pos, other)
+
+
+static func xfade_between(a: Variant, pos: Variant, b: Variant) -> StrudelPattern:
+	## Кривая та же, что в оригинале: до половины полная громкость, дальше
+	## спад до нуля. Оба голоса живут всегда, меняется только вес.
+	var pa := StrudelPattern.reify(a)
+	var pb := StrudelPattern.reify(b)
+	var pp := StrudelPattern.reify(pos)
+	var fade := func(x: float) -> float:
+		return 1.0 if x < 0.5 else 1.0 - (x - 0.5) / 0.5
+	var gain_a := pp.fmap(func(v): return {"gain": fade.call(StrudelPattern._num(v))})
+	var gain_b := pp.fmap(func(v): return {"gain": fade.call(1.0 - StrudelPattern._num(v))})
+	return StrudelPattern.stack([pa.mul([gain_a]), pb.mul([gain_b])])
+
+
+func beat(position: Variant, divisions: Variant) -> StrudelPattern:
+	## Ритм долями круга: `.beat("0,7,10", 16)` — доли 0, 7 и 10 из шестнадцати.
+	var me := self
+	return _patternify([position, divisions], func(vals: Array) -> StrudelPattern:
+		var div := StrudelFraction.of(vals[1])
+		var t := StrudelFraction.of(vals[0]).mod(div)
+		var b := t.div(div)
+		var e := t.add(StrudelFraction.new(1)).div(div)
+		return me.fmap(func(x) -> StrudelPattern:
+			return StrudelPattern.pure(x)._compress(b, e)
+		).inner_join()
+	)
+
+
+func ratio_() -> StrudelPattern:
+	## Список чисел → их отношение: `"3:2"` даёт полтора.
+	return fmap(func(v):
+		if not v is Array:
+			return v
+		var list: Array = v
+		if list.is_empty():
+			return v
+		var acc := StrudelPattern._num(list[0])
+		for i in range(1, list.size()):
+			acc /= StrudelPattern._num(list[i])
+		return acc
+	)
+
+
+func log2_() -> StrudelPattern:
+	## Двоичный логарифм значения.
+	return as_number().fmap(func(v): return log(StrudelPattern._num(v)) / log(2.0))
+
+
+func cpm(value: Variant) -> StrudelPattern:
+	## Кругов в МИНУТУ вместо секунд. Делитель — текущий темп запроса, как в
+	## repl-версии Strudel (`repl.mjs:387`), а не жёсткая единица.
+	var me := self
+	return _patternify([value], func(vals: Array) -> StrudelPattern:
+		var per_minute := StrudelPattern._num(vals[0])
+		return StrudelPattern.new(func(state: StrudelState) -> Array:
+			var cps: float = float(state.controls.get("_cps", 0.5))
+			return me._fast(per_minute / 60.0 / cps).query.call(state)
+		, me.steps)
+	)
+
+
+func hsl(h: Variant, s: Variant, l: Variant) -> StrudelPattern:
+	## Цвет события в HSL. Оттенок задаётся ОБОРОТАМИ (turn), а не градусами.
+	var me := self
+	return _patternify([h, s, l], func(vals: Array) -> StrudelPattern:
+		return me.ctrl("color", "hsl(%sturn,%s%%,%s%%)" % [
+			StrudelPattern._css_num(vals[0]),
+			StrudelPattern._css_num(StrudelPattern._num(vals[1]) * 100.0),
+			StrudelPattern._css_num(StrudelPattern._num(vals[2]) * 100.0)])
+	)
+
+
+func hsla(h: Variant, s: Variant, l: Variant, a: Variant) -> StrudelPattern:
+	## То же с прозрачностью.
+	var me := self
+	return _patternify([h, s, l, a], func(vals: Array) -> StrudelPattern:
+		return me.ctrl("color", "hsla(%sturn,%s%%,%s%%,%s)" % [
+			StrudelPattern._css_num(vals[0]),
+			StrudelPattern._css_num(StrudelPattern._num(vals[1]) * 100.0),
+			StrudelPattern._css_num(StrudelPattern._num(vals[2]) * 100.0),
+			StrudelPattern._css_num(vals[3])])
+	)
+
+
+static func _css_num(v: Variant) -> String:
+	## Число так, как его печатает JS: целое без хвоста «.0».
+	var f := StrudelPattern._num(v)
+	return str(int(f)) if f == floor(f) and absf(f) < 1e15 else str(f)
+
+
+func bypass(on: Variant) -> StrudelPattern:
+	## Выключатель партии: истина — тишина.
+	var me := self
+	return _patternify([on], func(vals: Array) -> StrudelPattern:
+		var v: Variant = vals[0]
+		var flag := false
+		if v is String or v is StringName:
+			flag = String(v).to_int() != 0
+		else:
+			flag = int(StrudelPattern._num(v)) != 0
+		return StrudelPattern.silence() if flag else me
+	)
+
+
+func compress_span(span: Variant) -> StrudelPattern:
+	## Вжать паттерн в отрезок, заданный парой [начало, конец].
+	var pair := StrudelPattern._span_pair(span)
+	return _compress(pair[0], pair[1])
+
+
+func focus_span(span: Variant) -> StrudelPattern:
+	## Как `compress_span`, но без пустоты по краям — повторяется дальше.
+	var pair := StrudelPattern._span_pair(span)
+	return _focus(pair[0], pair[1])
+
+
+func zoom_arc(span: Variant) -> StrudelPattern:
+	## Взять кусок паттерна, заданный парой [начало, конец], и растянуть.
+	var pair := StrudelPattern._span_pair(span)
+	return zoom(pair[0], pair[1])
+
+
+static func _span_pair(span: Variant) -> Array:
+	## Отрезок хоть парой чисел, хоть StrudelTimeSpan, хоть словарём.
+	if span is StrudelTimeSpan:
+		return [(span as StrudelTimeSpan).begin, (span as StrudelTimeSpan).end]
+	if span is Array and (span as Array).size() >= 2:
+		return [StrudelFraction.of(span[0]), StrudelFraction.of(span[1])]
+	if span is Dictionary:
+		var d: Dictionary = span
+		return [StrudelFraction.of(d.get("begin", 0)), StrudelFraction.of(d.get("end", 1))]
+	return [StrudelFraction.new(0), StrudelFraction.new(1)]
+
+
+static func apply_n_to(pat: StrudelPattern, times: int, fn: Callable) -> StrudelPattern:
+	## Применить действие N раз подряд.
+	var out := pat
+	for _i in times:
+		out = fn.call(out)
+	return out
+
 
 func loop_at(factor: Variant, cps_override: Variant = null) -> StrudelPattern:
 	## Растянуть сэмпл на N кругов: скорость воспроизведения подгоняется
