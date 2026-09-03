@@ -253,7 +253,7 @@ func _trigger(value: Variant, length: float, offset_in_buffer: int, count: int) 
 	var voice := _take_voice()
 	if voice == null:
 		return
-	StrudelVoiceBuilder.configure(voice, value, length, bank, mix_rate, soundfont)
+	StrudelVoiceBuilder.configure(voice, value, length, bank, mix_rate, soundfont, cps)
 	voice.start(mix_rate)
 	# Удар ставится на ТОЧНЫЙ отсчёт внутри буфера, а не на его границу:
 	# иначе доли дрожали бы на размер буфера — это слышно как неровный ритм.

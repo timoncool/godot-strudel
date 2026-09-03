@@ -29,7 +29,8 @@ const SYNTHS := {
 
 
 static func configure(voice: StrudelVoice, value: Dictionary, length: float,
-		bank: StrudelSampleBank, mix_rate: float, soundfont: StrudelSoundFont = null) -> void:
+		bank: StrudelSampleBank, mix_rate: float, soundfont: StrudelSoundFont = null,
+		cps: float = 0.5) -> void:
 	var note_midi := _midi_of(value)
 	voice.frequency = StrudelUtil.midi_to_freq(note_midi)
 	# Умолчание громкости в Strudel — 0.8, а не единица (`superdough.mjs:186`).
@@ -51,6 +52,41 @@ static func configure(voice: StrudelVoice, value: Dictionary, length: float,
 	voice.room = _num(value, "room", 0.0)
 	voice.delay_send = _num(value, "delay", 0.0)
 	voice.orbit = int(_num(value, "orbit", 0.0))
+
+	# ── перегруз ──
+	voice.distort = _num(value, "distort", 0.0)
+	voice.distortvol = _num(value, "distortvol", 1.0)
+	voice.distort_type = StrudelVoice.distort_index(value.get("distorttype", 0))
+
+	# ── тремоло ──
+	# 🔴 `tremolosync` задаёт частоту В ДОЛЯХ КРУГА, а не в герцах: чтобы
+	# качание держалось темпа, оно множится на круги в секунду.
+	if value.has("tremolosync"):
+		voice.tremolo = _num(value, "tremolosync", 0.0) * cps
+	else:
+		voice.tremolo = _num(value, "tremolo", 0.0)
+	voice.tremolo_depth = _num(value, "tremolodepth", 1.0)
+	voice.tremolo_skew = _num(value, "tremoloskew", -1.0) if value.has("tremoloskew") else -1.0
+	voice.tremolo_shape = _shape_index(value.get("tremoloshape", null))
+	voice.tremolo_phase = _num(value, "tremolophase", 0.0)
+
+	# ── сжатие ──
+	voice.compressor = _num(value, "compressor", NAN) if value.has("compressor") else NAN
+	voice.compressor_ratio = _num(value, "compressorRatio", 10.0)
+	voice.compressor_knee = _num(value, "compressorKnee", 10.0)
+	voice.compressor_attack = _num(value, "compressorAttack", 0.005)
+	voice.compressor_release = _num(value, "compressorRelease", 0.05)
+
+	# ── фазер ──
+	voice.phaser_rate = _num(value, "phaserrate", -1.0) if value.has("phaserrate") else -1.0
+	voice.phaser_depth = _num(value, "phaserdepth", 0.75)
+	voice.phaser_center = _num(value, "phasercenter", 1000.0)
+	voice.phaser_sweep = _num(value, "phasersweep", 2000.0)
+
+	# ── огибающие фильтров ──
+	voice.lp_env = _filter_env(value, "lp", "lpenv")
+	voice.hp_env = _filter_env(value, "hp", "hpenv")
+	voice.bp_env = _filter_env(value, "bp", "bpenv")
 	voice.note_length = maxf(length, 0.01)
 	voice.sample = PackedFloat32Array()
 	voice.sample_loop = false
@@ -138,3 +174,70 @@ static func _num(value: Dictionary, key: String, fallback: float) -> float:
 	if v is bool:
 		return 1.0 if v else 0.0
 	return fallback
+
+
+## Умолчания огибающей ФИЛЬТРА — свои, не такие, как у громкости
+## (`helpers.mjs:266`): короткая атака, заметный спад, нулевое удержание.
+const FILTER_ADSR := [0.005, 0.14, 0.0, 0.1]
+
+
+static func _filter_env(value: Dictionary, prefix: String, env_key: String) -> Array:
+	## → [величина, атака, спад, удержание, отпускание, якорь] либо пусто.
+	##
+	## 🔴 Огибающая включается, если задано ХОТЬ ЧТО-ТО из неё, включая сам
+	## `lpenv`. Иначе срез стоит на месте.
+	var keys := [env_key, prefix + "attack", prefix + "decay",
+		prefix + "sustain", prefix + "release"]
+	var any := false
+	for k in keys:
+		if value.has(k):
+			any = true
+			break
+	if not any:
+		return []
+	var a: Variant = value.get(prefix + "attack", null)
+	var d: Variant = value.get(prefix + "decay", null)
+	var s: Variant = value.get(prefix + "sustain", null)
+	var r: Variant = value.get(prefix + "release", null)
+	var adsr := _adsr_values(a, d, s, r)
+	return [
+		_num(value, env_key, 1.0),
+		adsr[0], adsr[1], adsr[2], adsr[3],
+		_num(value, "fanchor", 0.0),
+	]
+
+
+static func _adsr_values(a: Variant, d: Variant, s: Variant, r: Variant) -> Array:
+	## Перенос `getADSRValues` для фильтров: ничего не задано — умолчания;
+	## задана только атака — удержание в единице; иначе почти в нуле.
+	const ENV_MIN := 0.001
+	const RELEASE_MIN := 0.01
+	if a == null and d == null and s == null and r == null:
+		return FILTER_ADSR
+	var sustain: float
+	if s != null:
+		sustain = StrudelPattern._num(s)
+	elif (a != null and d == null) or (a == null and d == null):
+		sustain = 1.0
+	else:
+		sustain = ENV_MIN
+	return [
+		maxf(StrudelPattern._num(a) if a != null else 0.0, ENV_MIN),
+		maxf(StrudelPattern._num(d) if d != null else 0.0, ENV_MIN),
+		minf(sustain, 1.0),
+		maxf(StrudelPattern._num(r) if r != null else 0.0, RELEASE_MIN),
+	]
+
+
+## Формы качания по именам — те же номера, что в `worklets.mjs:72`.
+const SHAPE_NAMES := {"tri": 0, "triangle": 0, "sine": 1, "ramp": 2, "saw": 3,
+	"square": 4}
+
+
+static func _shape_index(v: Variant) -> int:
+	## → номер формы, −1 если форму не задавали.
+	if v == null:
+		return -1
+	if v is String or v is StringName:
+		return int(SHAPE_NAMES.get(String(v), 0))
+	return StrudelUtil.mod_i(int(StrudelPattern._num(v)), 5)

@@ -1,21 +1,130 @@
 [
-  { "id": "base",        "expr": "note(\"c3\").s(\"sawtooth\").gain(0.5)" },
-  { "id": "sine",        "expr": "note(\"c3\").s(\"sine\").gain(0.5)" },
-  { "id": "triangle",    "expr": "note(\"c3\").s(\"triangle\").gain(0.5)" },
-  { "id": "square",      "expr": "note(\"c3\").s(\"square\").gain(0.5)" },
-  { "id": "gain_low",    "expr": "note(\"c3\").s(\"sine\").gain(0.15)" },
-  { "id": "lpf",         "expr": "note(\"c3\").s(\"sawtooth\").lpf(800).gain(0.5)" },
-  { "id": "lpf_low",     "expr": "note(\"c3\").s(\"sawtooth\").lpf(300).gain(0.5)" },
-  { "id": "hpf",         "expr": "note(\"c3\").s(\"sawtooth\").hpf(800).gain(0.5)" },
-  { "id": "bpf",         "expr": "note(\"c3\").s(\"sawtooth\").bpf(900).bpq(6).gain(0.5)" },
-  { "id": "vowel_a",     "expr": "note(\"c3\").s(\"sawtooth\").vowel(\"a\").gain(0.5)" },
-  { "id": "vowel_i",     "expr": "note(\"c3\").s(\"sawtooth\").vowel(\"i\").gain(0.5)" },
-  { "id": "crush",       "expr": "note(\"c3\").s(\"sine\").crush(4).gain(0.5)" },
-  { "id": "coarse",      "expr": "note(\"c3\").s(\"sine\").coarse(8).gain(0.5)" },
-  { "id": "shape",       "expr": "note(\"c3\").s(\"sine\").shape(0.6).gain(0.5)" },
-  { "id": "pan_left",    "expr": "note(\"c3\").s(\"sine\").pan(0.1).gain(0.5)" },
-  { "id": "adsr",        "expr": "note(\"c3\").s(\"sine\").attack(0.3).release(0.8).gain(0.5)" },
-  { "id": "decay",       "expr": "note(\"c3\").s(\"sine\").decay(0.1).sustain(0.2).gain(0.5)" },
-  { "id": "order_crush_lpf", "expr": "note(\"c3\").s(\"sawtooth\").crush(4).lpf(800).gain(0.5)" },
-  { "id": "order_lpf_crush", "expr": "note(\"c3\").s(\"sawtooth\").lpf(800).crush(4).gain(0.5)" }
+ {
+  "id": "base",
+  "expr": "note(\"c3\").s(\"sawtooth\").gain(0.5)"
+ },
+ {
+  "id": "sine",
+  "expr": "note(\"c3\").s(\"sine\").gain(0.5)"
+ },
+ {
+  "id": "triangle",
+  "expr": "note(\"c3\").s(\"triangle\").gain(0.5)"
+ },
+ {
+  "id": "square",
+  "expr": "note(\"c3\").s(\"square\").gain(0.5)"
+ },
+ {
+  "id": "gain_low",
+  "expr": "note(\"c3\").s(\"sine\").gain(0.15)"
+ },
+ {
+  "id": "lpf",
+  "expr": "note(\"c3\").s(\"sawtooth\").lpf(800).gain(0.5)"
+ },
+ {
+  "id": "lpf_low",
+  "expr": "note(\"c3\").s(\"sawtooth\").lpf(300).gain(0.5)"
+ },
+ {
+  "id": "hpf",
+  "expr": "note(\"c3\").s(\"sawtooth\").hpf(800).gain(0.5)"
+ },
+ {
+  "id": "bpf",
+  "expr": "note(\"c3\").s(\"sawtooth\").bpf(900).bpq(6).gain(0.5)"
+ },
+ {
+  "id": "vowel_a",
+  "expr": "note(\"c3\").s(\"sawtooth\").vowel(\"a\").gain(0.5)"
+ },
+ {
+  "id": "vowel_i",
+  "expr": "note(\"c3\").s(\"sawtooth\").vowel(\"i\").gain(0.5)"
+ },
+ {
+  "id": "crush",
+  "expr": "note(\"c3\").s(\"sine\").crush(4).gain(0.5)"
+ },
+ {
+  "id": "coarse",
+  "expr": "note(\"c3\").s(\"sine\").coarse(8).gain(0.5)"
+ },
+ {
+  "id": "shape",
+  "expr": "note(\"c3\").s(\"sine\").shape(0.6).gain(0.5)"
+ },
+ {
+  "id": "pan_left",
+  "expr": "note(\"c3\").s(\"sine\").pan(0.1).gain(0.5)"
+ },
+ {
+  "id": "adsr",
+  "expr": "note(\"c3\").s(\"sine\").attack(0.3).release(0.8).gain(0.5)"
+ },
+ {
+  "id": "decay",
+  "expr": "note(\"c3\").s(\"sine\").decay(0.1).sustain(0.2).gain(0.5)"
+ },
+ {
+  "id": "order_crush_lpf",
+  "expr": "note(\"c3\").s(\"sawtooth\").crush(4).lpf(800).gain(0.5)"
+ },
+ {
+  "id": "order_lpf_crush",
+  "expr": "note(\"c3\").s(\"sawtooth\").lpf(800).crush(4).gain(0.5)"
+ },
+ {
+  "id": "distort",
+  "expr": "note(\"c3\").s(\"sawtooth\").gain(0.5).distort(1.5)"
+ },
+ {
+  "id": "distort_soft",
+  "expr": "note(\"c3\").s(\"sawtooth\").gain(0.5).distort(1.5).distorttype(\"soft\")"
+ },
+ {
+  "id": "distort_hard",
+  "expr": "note(\"c3\").s(\"sawtooth\").gain(0.5).distort(1.5).distorttype(\"hard\")"
+ },
+ {
+  "id": "distort_cubic",
+  "expr": "note(\"c3\").s(\"sawtooth\").gain(0.5).distort(1.5).distorttype(\"cubic\")"
+ },
+ {
+  "id": "distort_diode",
+  "expr": "note(\"c3\").s(\"sawtooth\").gain(0.5).distort(1.5).distorttype(\"diode\")"
+ },
+ {
+  "id": "distort_fold",
+  "expr": "note(\"c3\").s(\"sawtooth\").gain(0.5).distort(1.5).distorttype(\"fold\")"
+ },
+ {
+  "id": "distort_cheby",
+  "expr": "note(\"c3\").s(\"sawtooth\").gain(0.5).distort(1).distorttype(\"chebyshev\")"
+ },
+ {
+  "id": "tremolo",
+  "expr": "note(\"c3\").s(\"sawtooth\").gain(0.5).tremolo(4)"
+ },
+ {
+  "id": "tremolo_sine",
+  "expr": "note(\"c3\").s(\"sawtooth\").gain(0.5).tremolo(4).tremoloshape(\"sine\")"
+ },
+ {
+  "id": "compressor",
+  "expr": "note(\"c3\").s(\"sawtooth\").gain(0.9).compressor(-20)"
+ },
+ {
+  "id": "phaser",
+  "expr": "note(\"c3\").s(\"sawtooth\").gain(0.5).phaser(1)"
+ },
+ {
+  "id": "lpenv",
+  "expr": "note(\"c3\").s(\"sawtooth\").gain(0.5).lpf(400).lpenv(4).lpa(0.1).lpd(0.3)"
+ },
+ {
+  "id": "hpenv",
+  "expr": "note(\"c3\").s(\"sawtooth\").gain(0.5).hpf(400).hpenv(-3).hpa(0.05).hpd(0.4)"
+ }
 ]

@@ -15,10 +15,11 @@ extends RefCounted
 ## 🔴 Порядок менять «как удобнее» нельзя: `crush` до фильтра и после фильтра
 ## звучат по-разному, и это слышно.
 ##
-## Пила и меандр строятся с PolyBLEP — скруглением скачка. Наивные «зубцы»
-## дают призвуки на высоких (алиасинг): сверка со звуком Булки показывала
-## лишние 8-12 дБ выше двух килогерц, потому что в WebAudio осцилляторы
-## ограничены по полосе, а прямой отсчёт `2*фаза-1` — нет.
+## Пила, меандр и треугольник берутся из таблиц с ограниченной полосой —
+## см. StrudelWavetable. Наивные «зубцы» дают призвуки на высоких
+## (алиасинг), а PolyBLEP, который стоял здесь раньше, звучит громче
+## эталона: WebAudio приводит волну к единичному пику, и у пилы это
+## −0.75 дБ, которых у PolyBLEP нет.
 
 enum Source { SILENCE, SINE, SAW, SQUARE, TRIANGLE, WHITE, PINK, BROWN, SAMPLE }
 
@@ -60,6 +61,39 @@ var coarse := 0.0
 var shape := 0.0
 
 ## Отправки на общие эффекты.
+## Перегруз: величина, громкость после него и НОМЕР КРИВОЙ.
+## Кривых девять, порядок как в `helpers.mjs:573` — от него зависит, что
+## значит число в `.distorttype(3)`.
+var distort := 0.0
+var distortvol := 1.0
+var distort_type := 0
+
+## Тремоло: частота, глубина, перекос, форма и начальная фаза.
+var tremolo := 0.0
+var tremolo_depth := 1.0
+var tremolo_skew := -1.0
+var tremolo_shape := -1
+var tremolo_phase := 0.0
+
+## Сжатие. Порог в децибелах; NAN значит «выключено».
+var compressor := NAN
+var compressor_ratio := 10.0
+var compressor_knee := 10.0
+var compressor_attack := 0.005
+var compressor_release := 0.05
+
+## Фазер: частота качания, глубина, середина и размах.
+var phaser_rate := -1.0
+var phaser_depth := 0.75
+var phaser_center := 1000.0
+var phaser_sweep := 2000.0
+
+## Огибающие фильтров: [величина, атака, спад, удержание, отпускание, якорь]
+## для НЧ, ВЧ и полосового. Пустой массив — огибающей нет, срез постоянный.
+var lp_env: Array = []
+var hp_env: Array = []
+var bp_env: Array = []
+
 var room := 0.0
 var delay_send := 0.0
 var orbit := 0
@@ -72,6 +106,11 @@ var _pos := 0
 ## отсчёт внутри буфера, а не на его границу.
 var start_delay := 0
 var _phase := 0.0
+## Какая таблица волны нужна и как перетечь к следующей.
+var _wave_kind := -1
+var _wave_lo := 0
+var _wave_hi := 0
+var _wave_mix := 0.0
 var _sample_pos := 0.0
 var _rate := 48000.0
 var _brown := 0.0
@@ -87,6 +126,13 @@ var _bp_coef := PackedFloat32Array()
 var _vw_coef := PackedFloat32Array()
 var _vw_gain := PackedFloat32Array()
 var _vw_state := PackedFloat32Array()
+## Сколько отсчётов держится один пересчёт управляющих величин.
+const ENV_BLOCK := 32
+
+var _trem_phase := 0.0
+var _comp_env := 1.0
+var _phaser_phase := 0.0
+var _phaser_state := [0.0, 0.0, 0.0, 0.0]
 var _coarse_hold := 0.0
 var _coarse_count := 0
 
@@ -110,7 +156,30 @@ func start(mix_rate: float) -> void:
 	_bp_coef = _biquad_bandpass(bpf, bpq) if bpf > 0.0 else PackedFloat32Array()
 	_bp = [0.0, 0.0, 0.0, 0.0]
 	_setup_vowel()
+	_setup_wavetable()
 	active = true
+
+
+func _setup_wavetable() -> void:
+	## Выбор двух соседних таблиц и веса перетекания — по частоте ноты.
+	##
+	## 🔴 Считается ОДИН РАЗ на ноту, а не на отсчёт: у WebAudio таблица
+	## тоже выбирается по частоте осциллятора, а она за ноту не меняется.
+	_wave_kind = -1
+	match source:
+		Source.SAW: _wave_kind = StrudelWavetable.Kind.SAW
+		Source.SQUARE: _wave_kind = StrudelWavetable.Kind.SQUARE
+		Source.TRIANGLE: _wave_kind = StrudelWavetable.Kind.TRIANGLE
+	if _wave_kind < 0:
+		return
+	var f := absf(frequency * speed)
+	var pos := StrudelWavetable.range_position(f, _rate)
+	_wave_lo = clampi(int(floor(pos)), 0, StrudelWavetable.RANGES - 1)
+	_wave_hi = clampi(_wave_lo + 1, 0, StrudelWavetable.RANGES - 1)
+	_wave_mix = clampf(pos - float(_wave_lo), 0.0, 1.0)
+	# Таблицы строятся заранее, чтобы не считать их посреди буфера.
+	StrudelWavetable.table(_wave_kind, _wave_lo)
+	StrudelWavetable.table(_wave_kind, _wave_hi)
 
 
 func _setup_vowel() -> void:
@@ -169,6 +238,12 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 	var freq_step := frequency * speed / rate
 	var sample_step := speed * (sample_rate / rate)
 	var sample_last := sample.size() - 1
+	var wave_lo := StrudelWavetable.table(_wave_kind, _wave_lo) if _wave_kind >= 0 \
+		else PackedFloat32Array()
+	var wave_hi := StrudelWavetable.table(_wave_kind, _wave_hi) if _wave_kind >= 0 \
+		else PackedFloat32Array()
+	var wave_mix := _wave_mix
+	var wave_size := StrudelWavetable.SIZE
 
 	# огибающая — в отсчётах, без деления на каждом шаге
 	var a_end := envelope.attack * rate
@@ -229,6 +304,63 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 	var use_room := room > 0.0
 	var use_delay := delay_send > 0.0
 
+	# ── перегруз ──
+	var use_distort := distort != 0.0
+	var distort_k := exp(distort) - 1.0 if use_distort else 0.0
+	var distort_gain := clampf(distortvol, 0.001, 1.0)
+	var distort_algo := distort_type
+
+	# ── тремоло ──
+	# 🔴 Глубина ВЫЧИТАЕТСЯ из единицы, а качание ПРИБАВЛЯЕТСЯ к ней
+	# (`superdough.mjs:878`): при глубине 1 звук уходит в ноль на дне
+	# волны, а не просто становится тише.
+	var use_tremolo := tremolo > 0.0
+	var trem_base := maxf(1.0 - tremolo_depth, 0.0)
+	var trem_skew := tremolo_skew if tremolo_skew >= 0.0 \
+		else (0.5 if tremolo_shape >= 0 else 1.0)
+	var trem_shape := tremolo_shape if tremolo_shape >= 0 else 0
+	var trem_step := tremolo / rate if use_tremolo else 0.0
+	var trem_phase := _trem_phase
+
+	# ── сжатие ──
+	var use_comp := not is_nan(compressor)
+	var comp_thresh := compressor
+	var comp_ratio := maxf(compressor_ratio, 1.0)
+	var comp_knee := maxf(compressor_knee, 0.0)
+	var comp_att := maxf(compressor_attack, 0.0001)
+	var comp_rel := maxf(compressor_release, 0.0001)
+	var comp_att_c := exp(-1.0 / (comp_att * rate))
+	var comp_rel_c := exp(-1.0 / (comp_rel * rate))
+	var comp_env := _comp_env
+	var comp_curve: Array = _compressor_curve(comp_thresh, comp_knee, comp_ratio) \
+		if use_comp else []
+	var comp_makeup := float(comp_curve[3]) if use_comp else 1.0
+
+	# ── фазер ──
+	var use_phaser := phaser_rate > 0.0 and phaser_depth > 0.0
+	var phaser_q := 2.0 - clampf(phaser_depth * 2.0, 0.0, 1.9)
+	var phaser_base := phaser_center + 282.0
+	var phaser_step := phaser_rate / rate if use_phaser else 0.0
+	var phaser_ph := _phaser_phase
+	var fb0 := 0.0
+	var fb1 := 0.0
+	var fb2 := 0.0
+	var fa1 := 0.0
+	var fa2 := 0.0
+	var fx1: float = _phaser_state[0]
+	var fx2: float = _phaser_state[1]
+	var fy1: float = _phaser_state[2]
+	var fy2: float = _phaser_state[3]
+
+	# ── огибающие фильтров ──
+	# Пересчёт коэффициентов идёт не каждый отсчёт, а раз в BLOCK: WebAudio
+	# так же меряет управляющие величины раз в квант (128 отсчётов), и
+	# считать чаще незачем.
+	var lp_has_env := not lp_env.is_empty() and lpf > 0.0
+	var hp_has_env := not hp_env.is_empty() and hpf > 0.0
+	var bp_has_env := not bp_env.is_empty() and bpf > 0.0
+	var env_block := 0
+
 	var i := 0
 	while i < count:
 		if start_delay > 0:
@@ -241,6 +373,48 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 		var idx := from_frame + i
 		if idx >= buf_len:
 			break
+
+		if (lp_has_env or hp_has_env or bp_has_env) and env_block == 0:
+			var sec := float(pos) / rate
+			if lp_has_env:
+				var c := _biquad_lowpass(_filter_env_value(sec, lp_env, lpf), lpq)
+				lb0 = c[0]
+				lb1 = c[1]
+				lb2 = c[2]
+				la1 = c[3]
+				la2 = c[4]
+				use_lp = true
+			if hp_has_env:
+				var ch := _biquad_highpass(_filter_env_value(sec, hp_env, hpf), hpq)
+				hb0 = ch[0]
+				hb1 = ch[1]
+				hb2 = ch[2]
+				ha1 = ch[3]
+				ha2 = ch[4]
+				use_hp = true
+			if bp_has_env:
+				var cb := _biquad_bandpass(_filter_env_value(sec, bp_env, bpf), bpq)
+				pb0 = cb[0]
+				pb1 = cb[1]
+				pb2 = cb[2]
+				pa1 = cb[3]
+				pa2 = cb[4]
+				use_bp = true
+		if use_phaser and env_block == 0:
+			# Качание идёт в ЦЕНТАХ (`detune`), поэтому частота множится на
+			# два в степени «центы делить на тысячу двести».
+			var lv := lfo_shape(0, phaser_ph, 0.5) - 0.5
+			var cents := lv * phaser_sweep * 2.0
+			var cf := clampf(phaser_base * pow(2.0, cents / 1200.0), 10.0, 20000.0)
+			var cn := _biquad_notch(cf, phaser_q)
+			fb0 = cn[0]
+			fb1 = cn[1]
+			fb2 = cn[2]
+			fa1 = cn[3]
+			fa2 = cn[4]
+		env_block += 1
+		if env_block >= ENV_BLOCK:
+			env_block = 0
 
 		# ── источник ──
 		var raw := 0.0
@@ -261,45 +435,19 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 			phase += freq_step
 			if phase >= 1.0:
 				phase -= 1.0
-		elif src == Source.SAW:
-			# PolyBLEP: скругление скачка, чтобы пила не алиасила.
-			raw = phase * 2.0 - 1.0
-			var bl := 0.0
-			if phase < freq_step:
-				var q := phase / freq_step
-				bl = q + q - q * q - 1.0
-			elif phase > 1.0 - freq_step:
-				var q2 := (phase - 1.0) / freq_step
-				bl = q2 * q2 + q2 + q2 + 1.0
-			raw -= bl
-			phase += freq_step
-			if phase >= 1.0:
-				phase -= 1.0
-		elif src == Source.SQUARE:
-			raw = 1.0 if phase < 0.5 else -1.0
-			var b1 := 0.0
-			if phase < freq_step:
-				var q3 := phase / freq_step
-				b1 = q3 + q3 - q3 * q3 - 1.0
-			elif phase > 1.0 - freq_step:
-				var q4 := (phase - 1.0) / freq_step
-				b1 = q4 * q4 + q4 + q4 + 1.0
-			var ph2 := phase + 0.5
-			if ph2 >= 1.0:
-				ph2 -= 1.0
-			var b2 := 0.0
-			if ph2 < freq_step:
-				var q5 := ph2 / freq_step
-				b2 = q5 + q5 - q5 * q5 - 1.0
-			elif ph2 > 1.0 - freq_step:
-				var q6 := (ph2 - 1.0) / freq_step
-				b2 = q6 * q6 + q6 + q6 + 1.0
-			raw += b1 - b2
-			phase += freq_step
-			if phase >= 1.0:
-				phase -= 1.0
-		elif src == Source.TRIANGLE:
-			raw = 4.0 * absf(phase - 0.5) - 1.0
+		elif src == Source.SAW or src == Source.SQUARE or src == Source.TRIANGLE:
+			# Две соседние таблицы и перетекание между ними — как в
+			# WebAudio: одна на октаву, вес по дробной части номера.
+			var x := phase * float(wave_size)
+			var wi := int(x)
+			if wi < 0:
+				wi = 0
+			elif wi >= wave_size:
+				wi = wave_size - 1
+			var wf := x - float(wi)
+			var lo_v: float = wave_lo[wi] * (1.0 - wf) + wave_lo[wi + 1] * wf
+			var hi_v: float = wave_hi[wi] * (1.0 - wf) + wave_hi[wi + 1] * wf
+			raw = lo_v + (hi_v - lo_v) * wave_mix
 			phase += freq_step
 			if phase >= 1.0:
 				phase -= 1.0
@@ -375,6 +523,32 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 			s = round(s * crush_steps) / crush_steps
 		if use_shape:
 			s = (1.0 + shape_f) * s / (1.0 + shape_f * absf(s))
+		if use_distort:
+			s = distort_gain * distort_sample(s, distort_k, distort_algo)
+		if use_tremolo:
+			var mv := (lfo_shape(trem_shape, trem_phase, trem_skew)) * tremolo_depth
+			mv = pow(maxf(mv, 0.0), 1.5)
+			s *= trem_base + clampf(mv, 0.0, 1.0)
+			trem_phase += trem_step
+			if trem_phase >= 1.0:
+				trem_phase -= 1.0
+		if use_comp:
+			var mag := absf(s)
+			# Во сколько раз кривая душит этот отсчёт; единица — не душит.
+			var want := _compressor_gain(mag, comp_curve)
+			var coef := comp_att_c if want < comp_env else comp_rel_c
+			comp_env = want + coef * (comp_env - want)
+			s *= comp_env * comp_makeup
+		if use_phaser:
+			var fy := fb0 * s + fb1 * fx1 + fb2 * fx2 - fa1 * fy1 - fa2 * fy2
+			fx2 = fx1
+			fx1 = s
+			fy2 = fy1
+			fy1 = fy
+			s = fy
+			phaser_ph += phaser_step
+			if phaser_ph >= 1.0:
+				phaser_ph -= 1.0
 		s *= post
 
 		left[idx] += s * gl
@@ -401,6 +575,13 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 	_bp[1] = px2
 	_bp[2] = py1
 	_bp[3] = py2
+	_trem_phase = trem_phase
+	_comp_env = comp_env
+	_phaser_phase = phaser_ph
+	_phaser_state[0] = fx1
+	_phaser_state[1] = fx2
+	_phaser_state[2] = fy1
+	_phaser_state[3] = fy2
 
 
 func _source_sample() -> float:
@@ -496,8 +677,12 @@ func _apply_shape(s: float) -> float:
 # ── биквады (RBJ, как BiquadFilterNode в WebAudio) ───────────────────────────
 
 func _biquad_lowpass(freq: float, q: float) -> PackedFloat32Array:
+	## 🔴 У НЧ и ВЧ добротность задаётся В ДЕЦИБЕЛАХ, а не разом: так
+	## записано в описании BiquadFilterNode — `alpha = sin(w)/(2·10^(Q/20))`.
+	## У полосового, режекторного и остальных она обычная. Спутать это
+	## значит получить другой подъём на срезе.
 	var w := TAU * clampf(freq, 10.0, _rate * 0.45) / _rate
-	var alpha := sin(w) / (2.0 * maxf(q, 0.0001))
+	var alpha := sin(w) / (2.0 * pow(10.0, q / 20.0))
 	var cw := cos(w)
 	var b1 := 1.0 - cw
 	var b0 := b1 * 0.5
@@ -506,8 +691,9 @@ func _biquad_lowpass(freq: float, q: float) -> PackedFloat32Array:
 
 
 func _biquad_highpass(freq: float, q: float) -> PackedFloat32Array:
+	## Добротность в децибелах — см. _biquad_lowpass.
 	var w := TAU * clampf(freq, 10.0, _rate * 0.45) / _rate
-	var alpha := sin(w) / (2.0 * maxf(q, 0.0001))
+	var alpha := sin(w) / (2.0 * pow(10.0, q / 20.0))
 	var cw := cos(w)
 	var b0 := (1.0 + cw) * 0.5
 	var b1 := -(1.0 + cw)
@@ -531,3 +717,263 @@ func _biquad(x: float, c: PackedFloat32Array, state: Array) -> float:
 	state[3] = state[2]
 	state[2] = y
 	return y
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Перегруз, тремоло, сжатие, фазер — математика из superdough
+# ═══════════════════════════════════════════════════════════════════════════
+
+## Порядок кривых перегруза — из `helpers.mjs:573`. Номер `distorttype`
+## отсчитывается ПО ЭТОМУ СПИСКУ и заворачивается по кругу.
+const DISTORT_NAMES := ["scurve", "soft", "hard", "cubic", "diode", "asym",
+	"fold", "sinefold", "chebyshev"]
+
+
+static func distort_index(algo: Variant) -> int:
+	if algo is String or algo is StringName:
+		var i := DISTORT_NAMES.find(String(algo))
+		if i < 0:
+			push_warning("Strudel: не знаю перегруза \"%s\" — беру scurve" % algo)
+			return 0
+		return i
+	return StrudelUtil.mod_i(int(StrudelPattern._num(algo)), DISTORT_NAMES.size())
+
+
+static func _squash(x: float) -> float:
+	return x / (1.0 + x)
+
+
+static func _d_soft(x: float, k: float) -> float:
+	return tanh(x * (1.0 + k))
+
+
+static func _d_fold(x: float, k: float) -> float:
+	var y := (1.0 + 0.5 * k) * x
+	var window := fmod(fmod(y + 1.0, 4.0) + 4.0, 4.0)
+	return 1.0 - absf(window - 2.0)
+
+
+static func _d_diode(x: float, k: float, asym: bool) -> float:
+	var g := 1.0 + 2.0 * k
+	var tt := _squash(log(1.0 + k))
+	var bias := 0.07 * tt
+	var pos := _d_soft(x + bias, 2.0 * k)
+	var neg := _d_soft(bias if asym else -x + bias, 2.0 * k)
+	var y := pos - neg
+	# 🔴 Делим на производную в нуле, чтобы тихое осталось неискажённым.
+	var sech := 1.0 / cosh(g * bias)
+	var denom := maxf(1e-8, (1.0 if asym else 2.0) * g * sech * sech)
+	return _d_soft(y / denom, k)
+
+
+static func distort_sample(x: float, k: float, algo: int) -> float:
+	match algo:
+		0: return ((1.0 + k) * x) / (1.0 + k * absf(x))
+		1: return _d_soft(x, k)
+		2: return clampf((1.0 + k) * x, -1.0, 1.0)
+		3:
+			var tt := _squash(log(1.0 + k))
+			var cubic := (x - (tt / 3.0) * x * x * x) / (1.0 - tt / 3.0)
+			return _d_soft(cubic, k)
+		4: return _d_diode(x, k, false)
+		5: return _d_diode(x, k, true)
+		6: return _d_fold(x, k)
+		7: return sin((PI / 2.0) * _d_fold(x, k))
+		8:
+			# Чебышёвские полиномы: гармоники добавляются по рекуррентной
+			# формуле, чётные — с убывающим весом.
+			var kl := 10.0 * log(1.0 + k)
+			var tnm1 := 1.0
+			var tnm2 := x
+			var y := 0.0
+			for i in range(1, 64):
+				if i < 2:
+					y += tnm2
+					continue
+				var tn := 2.0 * x * tnm1 - tnm2
+				tnm2 = tnm1
+				tnm1 = tn
+				if i % 2 == 0:
+					y += minf(1.3 * kl / float(i), 2.0) * tn
+			return _d_soft(y, kl / 20.0)
+	return x
+
+
+## Формы качания у LFO — те же и в тех же номерах, что в `worklets.mjs:72`.
+static func lfo_shape(kind: int, phase: float, skew: float) -> float:
+	match kind:
+		1: return sin(TAU * phase) * 0.5 + 0.5
+		2: return phase
+		3: return 1.0 - phase
+		4: return 0.0 if phase >= skew else 1.0
+	# треугольник с перекосом
+	var x := 1.0 - skew
+	if phase >= skew:
+		return 1.0 / x - phase / x if x != 0.0 else 0.0
+	return phase / skew if skew != 0.0 else 0.0
+
+
+func _filter_env_value(pos_sec: float, spec: Array, base_freq: float) -> float:
+	## Срез фильтра в этот миг: показательная огибающая, как её строит
+	## `getParamADSR` в WebAudio (`helpers.mjs:55`).
+	##
+	## 🔴 Переходы ПОКАЗАТЕЛЬНЫЕ, а не прямые: ухо слышит частоту
+	## логарифмически, и прямой переход даёт совсем другое движение.
+	var env: float = spec[0]
+	var att: float = spec[1]
+	var dec: float = spec[2]
+	var sus: float = spec[3]
+	var rel: float = spec[4]
+	var anchor: float = spec[5]
+	var env_abs := absf(env)
+	var offset := env_abs * anchor
+	var lo := clampf(pow(2.0, -offset) * base_freq, 0.0, 20000.0)
+	var hi := clampf(pow(2.0, env_abs - offset) * base_freq, 0.0, 20000.0)
+	if env < 0.0:
+		var tmp := lo
+		lo = hi
+		hi = tmp
+	if lo == 0.0:
+		lo = 0.001
+	if hi == 0.0:
+		hi = 0.001
+	var sustain_val := lo + sus * (hi - lo)
+	if sustain_val <= 0.0:
+		sustain_val = 0.001
+	var duration := note_length
+
+	if pos_sec <= 0.0:
+		return lo
+	if att > duration:
+		var v_end := _env_val_at(duration, att, dec, lo, hi, sustain_val)
+		return _exp_ramp(lo, v_end, 0.0, duration, pos_sec) if pos_sec < duration \
+			else _exp_ramp(v_end, lo, duration, duration + rel, pos_sec)
+	if att + dec > duration:
+		if pos_sec < att:
+			return _exp_ramp(lo, hi, 0.0, att, pos_sec)
+		var v_end2 := _env_val_at(duration, att, dec, lo, hi, sustain_val)
+		if pos_sec < duration:
+			return _exp_ramp(hi, v_end2, att, duration, pos_sec)
+		return _exp_ramp(v_end2, lo, duration, duration + rel, pos_sec)
+	if pos_sec < att:
+		return _exp_ramp(lo, hi, 0.0, att, pos_sec)
+	if pos_sec < att + dec:
+		return _exp_ramp(hi, sustain_val, att, att + dec, pos_sec)
+	if pos_sec < duration:
+		return sustain_val
+	return _exp_ramp(sustain_val, lo, duration, duration + rel, pos_sec)
+
+
+static func _env_val_at(t: float, att: float, dec: float, lo: float, hi: float,
+		sustain_val: float) -> float:
+	if att > t:
+		var slope := (hi - lo) / att if att != 0.0 else 0.0
+		return maxf(t * slope + lo, 0.001)
+	var slope2 := (sustain_val - hi) / dec if dec != 0.0 else 0.0
+	return maxf((t - att) * slope2 + hi, 0.001)
+
+
+static func _exp_ramp(v0: float, v1: float, t0: float, t1: float, t: float) -> float:
+	## Показательный переход WebAudio: `v0 * (v1/v0)^((t-t0)/(t1-t0))`.
+	if t1 <= t0:
+		return v1
+	if t >= t1:
+		return v1
+	if t <= t0:
+		return v0
+	if v0 <= 0.0 or v1 <= 0.0:
+		return v0 + (v1 - v0) * (t - t0) / (t1 - t0)
+	return v0 * pow(v1 / v0, (t - t0) / (t1 - t0))
+
+
+func _biquad_notch(freq: float, q: float) -> PackedFloat32Array:
+	## Режекторный биквад — им и делается фазер (`superdough.mjs:388`).
+	var w := TAU * clampf(freq, 10.0, _rate * 0.49) / _rate
+	var cw := cos(w)
+	var alpha := sin(w) / (2.0 * maxf(q, 0.0001))
+	var a0 := 1.0 + alpha
+	return PackedFloat32Array([1.0 / a0, -2.0 * cw / a0, 1.0 / a0,
+		-2.0 * cw / a0, (1.0 - alpha) / a0])
+
+
+## Сколько шагов уточнения крутизны колена. Столько же в Chrome.
+const COMP_K_STEPS := 15
+
+
+static func _compressor_curve(threshold_db: float, knee_db: float,
+		ratio: float) -> Array:
+	## → [порог, крутизна колена k, порог колена, догоняющее усиление].
+	##
+	## 🔴 Кривая взята из Chrome (`DynamicsCompressorKernel`), а не из
+	## учебника: у WebAudio колено ПОКАЗАТЕЛЬНОЕ, а не квадратичное, и
+	## крутизна `k` подбирается ПОИСКОМ так, чтобы за коленом наклон совпал
+	## с заданным отношением. С учебниковой формулой партия расходилась с
+	## эталоном на девять децибел.
+	##
+	## 🔴 Догоняющее усиление берётся в СТЕПЕНИ 0.6 от обратной величины
+	## кривой на полной шкале — тоже из Chrome, «эмпирический расчёт».
+	var lin_threshold := db_to_linear(threshold_db)
+	var slope := 1.0 / maxf(ratio, 1.0)
+	var knee_threshold := db_to_linear(threshold_db + knee_db)
+
+	var min_k := 0.1
+	var max_k := 10000.0
+	var k := 5.0
+	for _i in COMP_K_STEPS:
+		if _knee_slope(knee_threshold, k, lin_threshold) < slope:
+			max_k = k
+		else:
+			min_k = k
+		k = sqrt(min_k * max_k)
+
+	var yknee_db := linear_to_db(_knee_curve(knee_threshold, k, lin_threshold))
+	var curve := [lin_threshold, k, knee_threshold, 1.0, slope, yknee_db,
+		threshold_db + knee_db]
+	var full := _compressor_saturate(1.0, curve)
+	curve[3] = pow(1.0 / maxf(full, 1e-6), 0.6)
+	return curve
+
+
+static func _knee_curve(x: float, k: float, lin_threshold: float) -> float:
+	if x < lin_threshold:
+		return x
+	return lin_threshold + (1.0 - exp(-k * (x - lin_threshold))) / k
+
+
+static func _knee_slope(x: float, k: float, lin_threshold: float) -> float:
+	if x < lin_threshold:
+		return 1.0
+	var x2 := x * 1.001
+	var x_db := linear_to_db(x)
+	var x2_db := linear_to_db(x2)
+	var y_db := linear_to_db(_knee_curve(x, k, lin_threshold))
+	var y2_db := linear_to_db(_knee_curve(x2, k, lin_threshold))
+	return (y2_db - y_db) / (x2_db - x_db)
+
+
+static func _compressor_saturate(x: float, curve: Array) -> float:
+	var lin_threshold: float = curve[0]
+	var k: float = curve[1]
+	var knee_threshold: float = curve[2]
+	if x < knee_threshold:
+		return _knee_curve(x, k, lin_threshold)
+	var slope: float = curve[4]
+	var yknee_db: float = curve[5]
+	var knee_db: float = curve[6]
+	return db_to_linear(yknee_db + slope * (linear_to_db(x) - knee_db))
+
+
+static func _compressor_gain(x: float, curve: Array) -> float:
+	if x < 1e-9:
+		return 1.0
+	return _compressor_saturate(x, curve) / x
+
+
+static func db_to_linear(db: float) -> float:
+	return pow(10.0, db / 20.0)
+
+
+static func linear_to_db(x: float) -> float:
+	if x <= 0.0:
+		return -1000.0
+	return 20.0 * log(x) / log(10.0)
