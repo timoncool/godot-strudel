@@ -1,0 +1,18 @@
+; Проект-витрина плагина Strudel для Godot.
+; Сам плагин целиком лежит в addons/strudel и ставится в любой чужой проект.
+
+config_version=5
+
+[application]
+
+config/name="Strudel for Godot"
+config/description="Живой код Strudel внутри движка: паттерны, сэмплер, синтез, эффекты."
+config/features=PackedStringArray("4.7")
+
+[audio]
+
+driver/mix_rate=48000
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/strudel/plugin.cfg")

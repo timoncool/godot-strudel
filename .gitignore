@@ -1,0 +1,8 @@
+# Godot
+.godot/
+*.import
+export_presets.cfg
+
+# Выгрузки сверки: порождаются прогоном, в поставке не нужны
+tools/judge/golden/godot.json
+tools/judge/*.log
