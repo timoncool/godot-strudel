@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://examples/07_community_tunes/community_tunes.gd" id="1"]
+
+[node name="CommunityTunes" type="Node"]
+script = ExtResource("1")

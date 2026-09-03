@@ -126,6 +126,7 @@ Neither is required to use this plugin — but writing music in a browser where 
 | `examples/01_minimal_beat` | The three-line case |
 | `examples/05_game_reacts` | Game visuals driven by pattern events |
 | `examples/06_full_track` | A complete 16-section track, ported unchanged |
+| `examples/07_community_tunes` | All 32 community tunes from Strudel's own collection — space cycles through them |
 
 ## Other Projects by [@timoncool](https://github.com/timoncool)
 

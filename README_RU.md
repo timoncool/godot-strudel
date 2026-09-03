@@ -126,6 +126,7 @@ music.set_pattern(beat)
 | `examples/01_minimal_beat` | Случай в три строки |
 | `examples/05_game_reacts` | Картинка игры, ведомая событиями паттерна |
 | `examples/06_full_track` | Целый трек из шестнадцати секций, перенесённый без правок |
+| `examples/07_community_tunes` | Тридцать два трека сообщества из коллекции Strudel — переключаются пробелом |
 
 ## Другие проекты [@timoncool](https://github.com/timoncool)
 
