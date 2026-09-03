@@ -21,7 +21,8 @@ extends RefCounted
 ## эталона: WebAudio приводит волну к единичному пику, и у пилы это
 ## −0.75 дБ, которых у PolyBLEP нет.
 
-enum Source { SILENCE, SINE, SAW, SQUARE, TRIANGLE, WHITE, PINK, BROWN, SAMPLE }
+enum Source { SILENCE, SINE, SAW, SQUARE, TRIANGLE, WHITE, PINK, BROWN, SAMPLE,
+	SUPERSAW, CUSTOM }
 
 ## Что звучит.
 var source: Source = Source.SINE
@@ -94,6 +95,29 @@ var lp_env: Array = []
 var hp_env: Array = []
 var bp_env: Array = []
 
+## Своя волна: веса обертонов и их фазы. Пусто — волна обычная.
+var wave_partials: Array = []
+var wave_phases: Array = []
+## Какой ряд коэффициентов берётся за основу своей волны.
+var wave_base_kind := StrudelWavetable.Kind.USER
+
+## Пила-стая: сколько голосов, насколько разведены по высоте и по панораме.
+var unison := 5
+var freq_spread := 0.18
+var pan_spread := 0.6
+
+## Огибающая ВЫСОТЫ: [полутонов, атака, спад, удержание, отпускание, якорь].
+var pitch_env: Array = []
+## Дрожание высоты: частота и размах в полутонах.
+var vibrato := 0.0
+var vibrato_depth := 0.5
+
+## Частотная модуляция. Каждый источник — словарь
+## {ratio, wave, adsr}; связи — тройки [откуда, куда, сила].
+## Ноль в «куда» значит саму ноту.
+var fm_sources: Array = []
+var fm_routes: Array = []
+
 var room := 0.0
 var delay_send := 0.0
 var orbit := 0
@@ -111,6 +135,13 @@ var _wave_kind := -1
 var _wave_lo := 0
 var _wave_hi := 0
 var _wave_mix := 0.0
+var _wave_key := ""
+var _super_phase := PackedFloat32Array()
+var _fm_phase := PackedFloat32Array()
+var _vib_phase := 0.0
+## Последние отсчёты стаи по ушам — панораму она делает сама.
+var _super_l := 0.0
+var _super_r := 0.0
 var _sample_pos := 0.0
 var _rate := 48000.0
 var _brown := 0.0
@@ -157,6 +188,17 @@ func start(mix_rate: float) -> void:
 	_bp = [0.0, 0.0, 0.0, 0.0]
 	_setup_vowel()
 	_setup_wavetable()
+	_super_phase = PackedFloat32Array()
+	if source == Source.SUPERSAW:
+		var count := clampi(unison, 1, 100)
+		_super_phase.resize(count)
+		for i in count:
+			# 🔴 Начальные фазы СЛУЧАЙНЫ — так в оригинале. Одинаковые фазы
+			# дали бы в первый миг сложение всех голосов в один щелчок.
+			_super_phase[i] = randf()
+	_fm_phase = PackedFloat32Array()
+	if not fm_sources.is_empty():
+		_fm_phase.resize(fm_sources.size())
 	active = true
 
 
@@ -166,10 +208,12 @@ func _setup_wavetable() -> void:
 	## 🔴 Считается ОДИН РАЗ на ноту, а не на отсчёт: у WebAudio таблица
 	## тоже выбирается по частоте осциллятора, а она за ноту не меняется.
 	_wave_kind = -1
+	_wave_key = ""
 	match source:
 		Source.SAW: _wave_kind = StrudelWavetable.Kind.SAW
 		Source.SQUARE: _wave_kind = StrudelWavetable.Kind.SQUARE
 		Source.TRIANGLE: _wave_kind = StrudelWavetable.Kind.TRIANGLE
+		Source.CUSTOM: _wave_kind = StrudelWavetable.Kind.USER
 	if _wave_kind < 0:
 		return
 	var f := absf(frequency * speed)
@@ -177,6 +221,14 @@ func _setup_wavetable() -> void:
 	_wave_lo = clampi(int(floor(pos)), 0, StrudelWavetable.RANGES - 1)
 	_wave_hi = clampi(_wave_lo + 1, 0, StrudelWavetable.RANGES - 1)
 	_wave_mix = clampf(pos - float(_wave_lo), 0.0, 1.0)
+	if source == Source.CUSTOM:
+		_wave_kind = wave_base_kind
+		_wave_key = StrudelWavetable.custom_key(wave_partials, wave_phases, _wave_kind)
+		StrudelWavetable.custom_table(_wave_key, wave_partials, wave_phases,
+			_wave_kind, _wave_lo)
+		StrudelWavetable.custom_table(_wave_key, wave_partials, wave_phases,
+			_wave_kind, _wave_hi)
+		return
 	# Таблицы строятся заранее, чтобы не считать их посреди буфера.
 	StrudelWavetable.table(_wave_kind, _wave_lo)
 	StrudelWavetable.table(_wave_kind, _wave_hi)
@@ -244,6 +296,34 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 		else PackedFloat32Array()
 	var wave_mix := _wave_mix
 	var wave_size := StrudelWavetable.SIZE
+	if _wave_kind >= 0 and _wave_key != "":
+		wave_lo = StrudelWavetable.custom_table(_wave_key, wave_partials,
+			wave_phases, _wave_kind, _wave_lo)
+		wave_hi = StrudelWavetable.custom_table(_wave_key, wave_partials,
+			wave_phases, _wave_kind, _wave_hi)
+
+	# ── частотная модуляция ──
+	var use_fm := not fm_sources.is_empty() and not fm_routes.is_empty()
+	var fm_count := fm_sources.size()
+	var fm_phase := _fm_phase
+	var fm_out := PackedFloat32Array()
+	var fm_dev := PackedFloat32Array()
+	if use_fm:
+		fm_out.resize(fm_count)
+		fm_dev.resize(fm_count + 1)
+
+	# ── дрожание и огибающая высоты: сдвиг в ПОЛУТОНАХ ──
+	var use_vib := vibrato > 0.0
+	var vib_step := vibrato / rate if use_vib else 0.0
+	var vib_phase := _vib_phase
+	var use_penv := not pitch_env.is_empty()
+
+	# ── пила-стая ──
+	var super_count := _super_phase.size()
+	var super_scale := 1.0 / sqrt(float(maxi(super_count, 1)))
+	var super_spread := clampf(pan_spread, 0.0, 1.0) if super_count > 1 else 0.0
+	var super_detune := freq_spread
+	var base_freq := frequency
 
 	# огибающая — в отсчётах, без деления на каждом шаге
 	var a_end := envelope.attack * rate
@@ -416,6 +496,47 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 		if env_block >= ENV_BLOCK:
 			env_block = 0
 
+		# ── сдвиг высоты: вибрато и огибающая, оба в ПОЛУТОНАХ ──
+		var semis := 0.0
+		if use_vib:
+			semis += sin(TAU * vib_phase) * vibrato_depth
+			vib_phase += vib_step
+			if vib_phase >= 1.0:
+				vib_phase -= 1.0
+		if use_penv:
+			semis += _pitch_env_value(float(pos) / rate) / 100.0
+		var pitch_mul := pow(2.0, semis / 12.0) if semis != 0.0 else 1.0
+
+		# ── частотная модуляция ──
+		# 🔴 Сперва снимаются ВСЕ голоса модуляции по их нынешним фазам, и
+		# только потом фазы двигаются: источники могут качать друг друга, и
+		# при последовательном обходе порядок решал бы звук.
+		var carrier_dev := 0.0
+		if use_fm:
+			for k in fm_count:
+				var srcd: Dictionary = fm_sources[k]
+				fm_out[k] = _fm_source_sample(k, fm_phase[k], float(pos) / rate, srcd)
+				fm_dev[k + 1] = 0.0
+			fm_dev[0] = 0.0
+			for r in fm_routes:
+				var from_i: int = r[0]
+				var to_i: int = r[1]
+				var amt: float = r[2]
+				var srcd2: Dictionary = fm_sources[from_i]
+				var mod_freq: float = base_freq * float(srcd2.get("ratio", 1.0))
+				fm_dev[to_i] += fm_out[from_i] * amt * mod_freq
+			carrier_dev = fm_dev[0]
+			for k in fm_count:
+				var srcd3: Dictionary = fm_sources[k]
+				var f_k: float = base_freq * float(srcd3.get("ratio", 1.0)) + fm_dev[k + 1]
+				var p_k: float = fm_phase[k] + f_k / rate
+				p_k = p_k - floor(p_k)
+				fm_phase[k] = p_k
+
+		var step := freq_step
+		if pitch_mul != 1.0 or carrier_dev != 0.0:
+			step = (base_freq * pitch_mul + carrier_dev) * speed / rate
+
 		# ── источник ──
 		var raw := 0.0
 		if src == Source.SAMPLE:
@@ -432,10 +553,43 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 			spos += sample_step
 		elif src == Source.SINE:
 			raw = sin(TAU * phase)
-			phase += freq_step
+			phase += step
 			if phase >= 1.0:
 				phase -= 1.0
-		elif src == Source.SAW or src == Source.SQUARE or src == Source.TRIANGLE:
+		elif src == Source.SUPERSAW:
+			# Стая пил, разведённых по высоте; панорама голосов чередуется.
+			var spread_half := super_spread * 0.5 + 0.5
+			var g1 := sqrt(1.0 - spread_half)
+			var g2 := sqrt(spread_half)
+			var f_base := base_freq * pitch_mul * pow(2.0, 0.0)
+			# растяжка стаи: от −половины до +половины разброса
+			var scale_v := super_detune / float(maxi(super_count - 1, 1))
+			var center := super_detune * 0.5
+			var accl := 0.0
+			var accr := 0.0
+			for v in super_count:
+				var dt_v := float(v) * scale_v - center if super_count > 1 else 0.0
+				var f_v := f_base * pow(2.0, dt_v / 12.0)
+				var dtn := f_v / rate
+				dtn = dtn - floor(dtn)
+				var ph_v: float = _super_phase[v]
+				var vv := 2.0 * ph_v - 1.0 - _poly_blep(ph_v, dtn)
+				accl += vv * g1
+				accr += vv * g2
+				var pn := ph_v + dtn
+				if pn >= 1.0:
+					pn -= 1.0
+				_super_phase[v] = pn
+				var tmp_g := g1
+				g1 = g2
+				g2 = tmp_g
+			# Оба уха уже собраны; дальше цепь мономерная, поэтому берём
+			# полусумму, а разведение возвращаем панорамой на выходе.
+			raw = (accl + accr) * 0.5 * super_scale
+			_super_l = accl * super_scale
+			_super_r = accr * super_scale
+		elif src == Source.SAW or src == Source.SQUARE or src == Source.TRIANGLE \
+				or src == Source.CUSTOM:
 			# Две соседние таблицы и перетекание между ними — как в
 			# WebAudio: одна на октаву, вес по дробной части номера.
 			var x := phase * float(wave_size)
@@ -448,7 +602,7 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 			var lo_v: float = wave_lo[wi] * (1.0 - wf) + wave_lo[wi + 1] * wf
 			var hi_v: float = wave_hi[wi] * (1.0 - wf) + wave_hi[wi + 1] * wf
 			raw = lo_v + (hi_v - lo_v) * wave_mix
-			phase += freq_step
+			phase += step
 			if phase >= 1.0:
 				phase -= 1.0
 		elif src == Source.WHITE:
@@ -551,8 +705,17 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 				phaser_ph -= 1.0
 		s *= post
 
-		left[idx] += s * gl
-		right[idx] += s * gr
+		if src == Source.SUPERSAW and absf(raw) > 1e-9:
+			# 🔴 Стая пил СТЕРЕО САМА: голоса раскиданы по ушам через один.
+			# Цепь эффектов у нас одноканальная, поэтому к ушам возвращается
+			# та же разница, помноженная на то, во сколько раз цепь изменила
+			# отсчёт. Для линейной цепи это точно, для перегруза — близко.
+			var ratio := s / raw
+			left[idx] += _super_l * ratio * gl
+			right[idx] += _super_r * ratio * gr
+		else:
+			left[idx] += s * gl
+			right[idx] += s * gr
 		if use_room:
 			room_bus[idx] += s * room
 		if use_delay:
@@ -575,6 +738,7 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 	_bp[1] = px2
 	_bp[2] = py1
 	_bp[3] = py2
+	_vib_phase = vib_phase
 	_trem_phase = trem_phase
 	_comp_env = comp_env
 	_phaser_phase = phaser_ph
@@ -977,3 +1141,97 @@ static func linear_to_db(x: float) -> float:
 	if x <= 0.0:
 		return -1000.0
 	return 20.0 * log(x) / log(10.0)
+
+
+func _poly_blep(phase: float, dt: float) -> float:
+	## Скругление скачка пилы (`worklets.mjs:53`). Стая пил строится так же,
+	## как в оригинале, — таблицами её там не делают.
+	var d := minf(dt, 1.0 - dt)
+	if d <= 0.0:
+		return 0.0
+	var inv := 1.0 / d
+	if phase < d:
+		var p := phase * inv
+		return 2.0 * p - p * p - 1.0
+	if phase > 1.0 - d:
+		var p2 := (phase - 1.0) * inv
+		return p2 * p2 + 2.0 * p2 + 1.0
+	return 0.0
+
+
+func _fm_source_sample(index: int, phase: float, pos_sec: float,
+		spec: Dictionary) -> float:
+	## Голос модуляции: форма волны и своя огибающая.
+	var wave: int = spec.get("wave", 0)
+	var v := 0.0
+	match wave:
+		1: v = 2.0 * phase - 1.0
+		2: v = 1.0 if phase < 0.5 else -1.0
+		3: v = 4.0 * absf(phase - 0.5) - 1.0
+		_: v = sin(TAU * phase)
+	var adsr: Array = spec.get("adsr", [])
+	if adsr.is_empty():
+		return v
+	return v * _fm_env_value(pos_sec, adsr)
+
+
+func _fm_env_value(pos_sec: float, adsr: Array) -> float:
+	## Огибающая модулятора: от нуля до единицы, переход показательный или
+	## прямой — по `fmenv`.
+	var att: float = adsr[0]
+	var dec: float = adsr[1]
+	var sus: float = adsr[2]
+	var rel: float = adsr[3]
+	var expo: bool = bool(adsr[4]) if adsr.size() > 4 else true
+	var lo := 0.001 if expo else 0.0
+	var hi := 1.0
+	var sustain_val := lo + sus * (hi - lo)
+	var dur := note_length
+	if pos_sec <= 0.0:
+		return lo
+	if pos_sec < att:
+		return _ramp(lo, hi, 0.0, att, pos_sec, expo)
+	if pos_sec < att + dec:
+		return _ramp(hi, sustain_val, att, att + dec, pos_sec, expo)
+	if pos_sec < dur:
+		return sustain_val
+	return _ramp(sustain_val, lo, dur, dur + rel, pos_sec, expo)
+
+
+func _pitch_env_value(pos_sec: float) -> float:
+	## Сдвиг высоты В ЦЕНТАХ. Якорь решает, куда смотрит нота в покое:
+	## при единице огибающая ПАДАЕТ к ней сверху, при нуле — растёт снизу.
+	var penv: float = pitch_env[0]
+	var att: float = pitch_env[1]
+	var dec: float = pitch_env[2]
+	var sus: float = pitch_env[3]
+	var rel: float = pitch_env[4]
+	var anchor: float = pitch_env[5]
+	var expo: bool = bool(pitch_env[6]) if pitch_env.size() > 6 else false
+	var cents := penv * 100.0
+	var lo := 0.0 - cents * anchor
+	var hi := cents - cents * anchor
+	var sustain_val := lo + sus * (hi - lo)
+	var dur := note_length
+	if pos_sec <= 0.0:
+		return lo
+	if pos_sec < att:
+		return _ramp(lo, hi, 0.0, att, pos_sec, expo)
+	if pos_sec < att + dec:
+		return _ramp(hi, sustain_val, att, att + dec, pos_sec, expo)
+	if pos_sec < dur:
+		return sustain_val
+	return _ramp(sustain_val, lo, dur, dur + rel, pos_sec, expo)
+
+
+static func _ramp(v0: float, v1: float, t0: float, t1: float, t: float,
+		expo: bool) -> float:
+	if expo:
+		return _exp_ramp(v0, v1, t0, t1, t)
+	if t1 <= t0:
+		return v1
+	if t >= t1:
+		return v1
+	if t <= t0:
+		return v0
+	return v0 + (v1 - v0) * (t - t0) / (t1 - t0)

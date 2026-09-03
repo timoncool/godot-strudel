@@ -25,7 +25,15 @@ const SYNTHS := {
 	"white": StrudelVoice.Source.WHITE,
 	"pink": StrudelVoice.Source.PINK,
 	"brown": StrudelVoice.Source.BROWN,
+	"supersaw": StrudelVoice.Source.SUPERSAW,
+	# «user» — волна целиком из своих обертонов (`partials`).
+	"user": StrudelVoice.Source.CUSTOM,
+	"one": StrudelVoice.Source.SILENCE,
 }
+
+## Формы волны для голосов модуляции: имя → номер в голосе.
+const FM_WAVES := {"sine": 0, "sawtooth": 1, "saw": 1, "square": 2,
+	"triangle": 3, "tri": 3}
 
 
 static func configure(voice: StrudelVoice, value: Dictionary, length: float,
@@ -84,6 +92,27 @@ static func configure(voice: StrudelVoice, value: Dictionary, length: float,
 	voice.phaser_sweep = _num(value, "phasersweep", 2000.0)
 
 	# ── огибающие фильтров ──
+	# ── синтез: своя волна, стая, модуляция ──
+	voice.wave_partials = _list_of(value.get("partials", null))
+	voice.wave_phases = _list_of(value.get("phases", null))
+	voice.unison = int(_num(value, "unison", 5.0))
+	# 🔴 Разброс стаи берётся из `detune`, а если его нет — из `n`, и только
+	# потом из умолчания 0.18 (`synth.mjs:157`). Поэтому `s("supersaw").n(1)`
+	# разводит голоса на полутон, а не выбирает сэмпл.
+	if value.has("detune"):
+		voice.freq_spread = _num(value, "detune", 0.18)
+	elif value.has("n"):
+		voice.freq_spread = _num(value, "n", 0.18)
+	else:
+		voice.freq_spread = 0.18
+	voice.pan_spread = _num(value, "spread", 0.6)
+	voice.vibrato = _num(value, "vib", 0.0)
+	voice.vibrato_depth = _num(value, "vibmod", 0.5)
+	voice.pitch_env = _pitch_env(value)
+	var fm := _fm_matrix(value)
+	voice.fm_sources = fm[0]
+	voice.fm_routes = fm[1]
+
 	voice.lp_env = _filter_env(value, "lp", "lpenv")
 	voice.hp_env = _filter_env(value, "hp", "hpenv")
 	voice.bp_env = _filter_env(value, "bp", "bpenv")
@@ -128,6 +157,16 @@ static func configure(voice: StrudelVoice, value: Dictionary, length: float,
 		# Синтез — сам по себе, либо потому что сэмпла нет. Пустой банк это
 		# ШТАТНОЕ состояние (мобильная сборка, свежая установка).
 		voice.source = SYNTHS.get(sound, StrudelVoice.Source.TRIANGLE)
+		# 🔴 Свои обертоны ПРЕВРАЩАЮТ любой из встроенных видов в свою волну:
+		# вид задаёт исходные коэффициенты, `partials` их множит
+		# (`synth.mjs:503`). Без обертонов «user» звучал бы тишиной, поэтому
+		# оригинал подменяет его треугольником — делаем так же.
+		if not voice.wave_partials.is_empty():
+			voice.wave_base_kind = _wave_kind_of(sound)
+			voice.source = StrudelVoice.Source.CUSTOM
+		elif voice.source == StrudelVoice.Source.CUSTOM:
+			push_warning("Strudel: у синтеза \"user\" не заданы partials — играю треугольник")
+			voice.source = StrudelVoice.Source.TRIANGLE
 		# 🔴 Синтез в Strudel ПРИГЛУШЁН на 0.3 (`synth.mjs:54`, «turn down»),
 		# и огибающая у него своя. Без этих двух вещей синтез выходит на
 		# одиннадцать децибел громче эталона — замерено сверкой звука.
@@ -241,3 +280,110 @@ static func _shape_index(v: Variant) -> int:
 	if v is String or v is StringName:
 		return int(SHAPE_NAMES.get(String(v), 0))
 	return StrudelUtil.mod_i(int(StrudelPattern._num(v)), 5)
+
+
+static func _wave_kind_of(sound: String) -> int:
+	match sound:
+		"sawtooth", "saw": return StrudelWavetable.Kind.SAW
+		"square": return StrudelWavetable.Kind.SQUARE
+		"triangle", "tri": return StrudelWavetable.Kind.TRIANGLE
+	return StrudelWavetable.Kind.USER
+
+
+static func _list_of(v: Variant) -> Array:
+	if v is Array:
+		return v
+	if v == null:
+		return []
+	return [v]
+
+
+## Умолчания огибающей ВЫСОТЫ (`helpers.mjs:349`): долгая атака, мгновенный
+## спад — так получается «взлёт», а не щелчок.
+const PITCH_ADSR := [0.2, 0.001, 1.0, 0.001]
+
+
+static func _pitch_env(value: Dictionary) -> Array:
+	## → [полутонов, атака, спад, удержание, отпускание, якорь, показательно].
+	var keys := ["penv", "pattack", "pdecay", "psustain", "prelease"]
+	var any := false
+	for k in keys:
+		if value.has(k):
+			any = true
+			break
+	if not any:
+		return []
+	var adsr := _adsr_or(value, "p", PITCH_ADSR)
+	# 🔴 Якорь по умолчанию РАВЕН УДЕРЖАНИЮ, а не нулю: иначе нота в покое
+	# уезжала бы по высоте.
+	var anchor := _num(value, "panchor", adsr[2])
+	var expo := int(_num(value, "pcurve", 0.0)) != 0
+	return [_num(value, "penv", 1.0), adsr[0], adsr[1], adsr[2], adsr[3],
+		anchor, expo]
+
+
+static func _adsr_or(value: Dictionary, prefix: String, defaults: Array) -> Array:
+	return _adsr_values(
+		value.get(prefix + "attack", null), value.get(prefix + "decay", null),
+		value.get(prefix + "sustain", null), value.get(prefix + "release", null)
+	) if (value.has(prefix + "attack") or value.has(prefix + "decay")
+		or value.has(prefix + "sustain") or value.has(prefix + "release")) else defaults
+
+
+static func _fm_matrix(value: Dictionary) -> Array:
+	## Разбор восьми голосов модуляции и связей между ними.
+	##
+	## 🔴 Связь `fmi` без цифр — это «первый голос качает саму ноту».
+	## Пара цифр `fmi<откуда><куда>` задаёт любую другую: ноль в «куда»
+	## снова значит саму ноту. Так устроена матрица в `applyFM`.
+	var sources: Array = []
+	var index_of: Dictionary = {}
+	var routes: Array = []
+	for i in range(1, 9):
+		for j in range(0, 9):
+			var control := ""
+			if i == j + 1:
+				control = "fmi" if i == 1 else "fmi%d" % i
+			else:
+				control = "fmi%d%d" % [i, j]
+			if not value.has(control):
+				continue
+			var amt := _num(value, control, 0.0)
+			if amt == 0.0:
+				continue
+			var from_i := _fm_source(sources, index_of, i, value)
+			var to_i := 0
+			if j > 0:
+				to_i = _fm_source(sources, index_of, j, value) + 1
+			routes.append([from_i, to_i, amt])
+	return [sources, routes]
+
+
+static func _fm_source(sources: Array, index_of: Dictionary, n: int,
+		value: Dictionary) -> int:
+	if index_of.has(n):
+		return index_of[n]
+	var suffix := "" if n == 1 else str(n)
+	var adsr: Array = []
+	var keys := ["fmattack" + suffix, "fmdecay" + suffix, "fmsustain" + suffix,
+		"fmrelease" + suffix]
+	var any := false
+	for k in keys:
+		if value.has(k):
+			any = true
+			break
+	if any:
+		var v := _adsr_values(value.get(keys[0], null), value.get(keys[1], null),
+			value.get(keys[2], null), value.get(keys[3], null))
+		# `fmenv` выбирает вид перехода: «exp» (по умолчанию) или «lin».
+		var kind := StrudelUtil.text(value.get("fmenv" + suffix, "exp"))
+		adsr = [v[0], v[1], v[2], v[3], kind != "lin"]
+	var wave_name := StrudelUtil.text(value.get("fmwave" + suffix, "sine"))
+	var idx := sources.size()
+	sources.append({
+		"ratio": _num(value, "fmh" + suffix, 1.0),
+		"wave": int(FM_WAVES.get(wave_name, 0)),
+		"adsr": adsr,
+	})
+	index_of[n] = idx
+	return idx

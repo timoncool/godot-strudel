@@ -126,5 +126,41 @@
  {
   "id": "hpenv",
   "expr": "note(\"c3\").s(\"sawtooth\").gain(0.5).hpf(400).hpenv(-3).hpa(0.05).hpd(0.4)"
+ },
+ {
+  "id": "fm",
+  "expr": "note(\"c3\").s(\"sine\").gain(0.5).fm(4)"
+ },
+ {
+  "id": "fm_h",
+  "expr": "note(\"c3\").s(\"sine\").gain(0.5).fm(4).fmh(2.5)"
+ },
+ {
+  "id": "fm_env",
+  "expr": "note(\"c3\").s(\"sine\").gain(0.5).fm(6).fmattack(0.3).fmdecay(0.4).fmsustain(0.1)"
+ },
+ {
+  "id": "supersaw",
+  "expr": "note(\"c3\").s(\"supersaw\").gain(0.5)"
+ },
+ {
+  "id": "supersaw_wide",
+  "expr": "note(\"c3\").s(\"supersaw\").gain(0.5).unison(7).detune(0.5)"
+ },
+ {
+  "id": "partials",
+  "expr": "note(\"c3\").s(\"sawtooth\").gain(0.5).partials([1,0,1,0,0,1])"
+ },
+ {
+  "id": "phases",
+  "expr": "note(\"c3\").s(\"sawtooth\").gain(0.5).partials([1,1,1]).phases([0.5,0.5,0.5])"
+ },
+ {
+  "id": "vib",
+  "expr": "note(\"c3\").s(\"sine\").gain(0.5).vib(6).vibmod(1)"
+ },
+ {
+  "id": "penv",
+  "expr": "note(\"c3\").s(\"sawtooth\").gain(0.5).penv(12).pattack(0.4)"
  }
 ]
