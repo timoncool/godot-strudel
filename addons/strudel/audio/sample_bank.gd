@@ -37,6 +37,11 @@ func count() -> int:
 	return entries.size()
 
 
+## Какие звуковые файлы берутся из папки. WAV разбирается сам, ogg и mp3 —
+## через проигрыватель движка.
+const AUDIO_EXTS := ["wav", "ogg", "mp3"]
+
+
 func load_folder(path: String) -> int:
 	## Загружает все карты (*.json) и все звуки из папки. → сколько имён вышло.
 	root_path = path
@@ -91,7 +96,7 @@ func _scan_audio(path: String, prefix: String, skip: Dictionary) -> void:
 		if dir.current_is_dir():
 			if not name.begins_with("."):
 				_scan_audio(full, name, skip)
-		elif name.to_lower().ends_with(".wav"):
+		elif AUDIO_EXTS.has(name.get_extension().to_lower()):
 			var key := prefix if prefix != "" else name.get_basename()
 			if not skip.has(key):
 				if not entries.has(key):
@@ -193,31 +198,90 @@ func resolve(name: String, index: int, bank_name: String, midi_note: float) -> D
 	return {"data": pcm, "rate": float(_rates.get(path, 48000.0)), "speed": 1.0}
 
 
+func pcm_of(path: String) -> PackedFloat32Array:
+	## Отсчёты файла по пути. Открытая дверь для проверок и для игры,
+	## которой понадобился сэмпл сам по себе.
+	return _pcm(path)
+
+
+func rate_of(path: String) -> float:
+	## Частота дискретизации файла. Читается ПОСЛЕ разбора: у сжатых
+	## форматов она известна только оттуда.
+	if not _rates.has(path):
+		_pcm(path)
+	return float(_rates.get(path, 44100.0))
+
+
 func _pcm(path: String) -> PackedFloat32Array:
 	if _cache.has(path):
 		return _cache[path]
-	var lower := path.to_lower()
-	if not lower.ends_with(".wav"):
-		# ⚠ Godot умеет ЗАГРУЗИТЬ ogg/mp3, но не отдаёт из них PCM в GDScript,
-		# а он нужен для пер-голосовой цепи. Такие файлы конвертируются заранее
-		# (tools/convert_samples.py). Говорим об этом ОДИН раз на файл.
-		if not _complained.has(path):
-			_complained[path] = true
-			push_warning("Strudel: \"%s\" не WAV — пропущен. Переведи пак в WAV (tools/convert_samples.py)." % path.get_file())
-		_cache[path] = PackedFloat32Array()
-		return _cache[path]
+	var ext := path.get_extension().to_lower()
+	if ext == "wav":
+		var wav := AudioStreamWAV.load_from_file(path)
+		if wav == null:
+			return _no_pcm(path, "не прочитал")
+		var out := _decode_wav(wav)
+		_cache[path] = out
+		_rates[path] = float(wav.mix_rate)
+		return out
 
-	var wav := AudioStreamWAV.load_from_file(path)
-	if wav == null:
-		if not _complained.has(path):
-			_complained[path] = true
-			push_warning("Strudel: не прочитал \"%s\"" % path)
-		_cache[path] = PackedFloat32Array()
-		return _cache[path]
+	if not AUDIO_EXTS.has(ext):
+		return _no_pcm(path, "не знаю такого расширения")
 
-	var out := _decode_wav(wav)
-	_cache[path] = out
-	_rates[path] = float(wav.mix_rate)
+	# 🔴 У ogg и mp3 отсчётов НАПРЯМУЮ не достать: разбор живёт внутри
+	# движка. Зато проигрыватель отдаёт уже разобранные кадры
+	# (`AudioStreamPlayback.mix_audio`) — этим и пользуемся. Частота при
+	# этом ВСЕГДА серверная: `mix_audio` пересчитывает сам.
+	var stream: AudioStream = null
+	if ext == "ogg":
+		stream = AudioStreamOggVorbis.load_from_file(path)
+	elif ext == "mp3":
+		stream = AudioStreamMP3.load_from_file(path)
+	if stream == null:
+		return _no_pcm(path, "не прочитал")
+	var decoded := _decode_stream(stream)
+	if decoded.is_empty():
+		return _no_pcm(path, "разобрался пустым")
+	_cache[path] = decoded
+	_rates[path] = AudioServer.get_mix_rate()
+	return decoded
+
+
+func _no_pcm(path: String, why: String) -> PackedFloat32Array:
+	## Пожаловаться ОДИН раз на файл и запомнить пустоту, чтобы не читать
+	## битый файл на каждой ноте.
+	if not _complained.has(path):
+		_complained[path] = true
+		push_warning("Strudel: \"%s\" — %s" % [path.get_file(), why])
+	_cache[path] = PackedFloat32Array()
+	return _cache[path]
+
+
+## Сколько кадров берётся за раз при разборе сжатого файла.
+const DECODE_CHUNK := 4096
+## Предел длины сэмпла — десять минут. Защита от зацикленного потока:
+## `mix_audio` у петли не кончается никогда.
+const DECODE_LIMIT := 10 * 60
+
+
+static func _decode_stream(stream: AudioStream) -> PackedFloat32Array:
+	## Разбор сжатого потока в моно с плавающей точкой.
+	var playback := stream.instantiate_playback()
+	if playback == null:
+		return PackedFloat32Array()
+	playback.start(0.0)
+	var out := PackedFloat32Array()
+	var limit := int(AudioServer.get_mix_rate() * float(DECODE_LIMIT))
+	while playback.is_playing() and out.size() < limit:
+		var chunk: PackedVector2Array = playback.mix_audio(1.0, DECODE_CHUNK)
+		if chunk.is_empty():
+			break
+		var base := out.size()
+		out.resize(base + chunk.size())
+		for i in chunk.size():
+			# Голос панорамирует сам, поэтому уши складываются пополам.
+			out[base + i] = (chunk[i].x + chunk[i].y) * 0.5
+	playback.stop()
 	return out
 
 

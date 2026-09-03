@@ -52,19 +52,42 @@ var _anchor_cycle := 0.0
 
 var _left := PackedFloat32Array()
 var _right := PackedFloat32Array()
-var _room_bus := PackedFloat32Array()
-var _delay_bus := PackedFloat32Array()
+## Орбиты: у каждой СВОИ эхо и зал.
+##
+## 🔴 В Strudel эхо и зал живут не на игру, а на ОРБИТУ (`orbit`), и их
+## настройки берутся у последнего события, которое туда пришло
+## (`superdough.mjs:925`). Одна общая линия задержки на всё смешивала бы
+## барабаны с клавишами: у них разное время эха.
+var _orbits: Dictionary = {}
 
-# Общие эффекты
-var _delay_line := PackedFloat32Array()
-var _delay_head := 0
+## Умолчания эха, пока никто не задал своих (`superdough.mjs:196`).
 var delay_time := 0.25
 var delay_feedback := 0.5
-var _reverb: StrudelReverb = null
 
 
 func _init() -> void:
-	_reverb = StrudelReverb.new()
+	pass
+
+
+func _orbit(index: int) -> Dictionary:
+	## Орбита по номеру; заводится при первом обращении.
+	if _orbits.has(index):
+		return _orbits[index]
+	var reverb := StrudelReverb.new()
+	reverb.setup(mix_rate)
+	var line := PackedFloat32Array()
+	line.resize(maxi(int(mix_rate * 2.0), 1))
+	var made := {
+		"room": PackedFloat32Array(),
+		"delay": PackedFloat32Array(),
+		"line": line,
+		"head": 0,
+		"reverb": reverb,
+		"time": delay_time,
+		"feedback": delay_feedback,
+	}
+	_orbits[index] = made
+	return made
 
 
 func setup(rate: float) -> void:
@@ -72,10 +95,7 @@ func setup(rate: float) -> void:
 	_voices.clear()
 	for i in max_voices:
 		_voices.append(StrudelVoice.new())
-	_delay_line = PackedFloat32Array()
-	_delay_line.resize(int(rate * 2.0))
-	_delay_head = 0
-	_reverb.setup(rate)
+	_orbits.clear()
 	reset_clock()
 
 
@@ -194,13 +214,21 @@ func _render(count: int) -> void:
 	if _left.size() < count:
 		_left.resize(count)
 		_right.resize(count)
-		_room_bus.resize(count)
-		_delay_bus.resize(count)
 	for i in count:
 		_left[i] = 0.0
 		_right[i] = 0.0
-		_room_bus[i] = 0.0
-		_delay_bus[i] = 0.0
+	for key in _orbits:
+		var orb: Dictionary = _orbits[key]
+		var rb: PackedFloat32Array = orb["room"]
+		var db: PackedFloat32Array = orb["delay"]
+		if rb.size() < count:
+			rb.resize(count)
+			db.resize(count)
+			orb["room"] = rb
+			orb["delay"] = db
+		for i in count:
+			rb[i] = 0.0
+			db[i] = 0.0
 
 	_ensure_scheduled(_frames_written + count + int(lookahead * mix_rate))
 
@@ -217,10 +245,13 @@ func _render(count: int) -> void:
 
 	for v in _voices:
 		if v.active:
-			v.render(_left, _right, 0, count, _room_bus, _delay_bus)
+			var orb := _orbit(v.orbit)
+			v.render(_left, _right, 0, count, orb["room"], orb["delay"])
 
-	_mix_delay(count)
-	_reverb.render(_room_bus, _left, _right, count)
+	for key in _orbits:
+		var orb2: Dictionary = _orbits[key]
+		_mix_delay(orb2, count)
+		(orb2["reverb"] as StrudelReverb).render(orb2["room"], _left, _right, count)
 
 	for i in count:
 		var l: float = _left[i]
@@ -233,18 +264,25 @@ func _render(count: int) -> void:
 				_right[i] = r / (1.0 + absf(r) - 1.0) if absf(r) > 1.0 else r
 
 
-func _mix_delay(count: int) -> void:
-	if _delay_line.is_empty():
+func _mix_delay(orb: Dictionary, count: int) -> void:
+	var line: PackedFloat32Array = orb["line"]
+	if line.is_empty():
 		return
-	var size := _delay_line.size()
-	var offset := int(clampf(delay_time, 0.001, 1.9) * mix_rate)
+	var bus: PackedFloat32Array = orb["delay"]
+	var size := line.size()
+	var head: int = orb["head"]
+	var offset := int(clampf(float(orb["time"]), 0.001, 1.9) * mix_rate)
+	# 🔴 Отклик зажат по 0.98: при единице и выше эхо растёт само себя и
+	# уходит в бесконечность. Так же зажимает Strudel.
+	var fb := clampf(float(orb["feedback"]), 0.0, 0.98)
 	for i in count:
-		var read := (_delay_head - offset + size) % size
-		var echoed: float = _delay_line[read]
-		_delay_line[_delay_head] = _delay_bus[i] + echoed * delay_feedback
+		var read := (head - offset + size) % size
+		var echoed: float = line[read]
+		line[head] = bus[i] + echoed * fb
 		_left[i] += echoed * 0.5
 		_right[i] += echoed * 0.5
-		_delay_head = (_delay_head + 1) % size
+		head = (head + 1) % size
+	orb["head"] = head
 
 
 func _trigger(value: Variant, length: float, offset_in_buffer: int, count: int) -> void:
@@ -254,6 +292,25 @@ func _trigger(value: Variant, length: float, offset_in_buffer: int, count: int) 
 	if voice == null:
 		return
 	StrudelVoiceBuilder.configure(voice, value, length, bank, mix_rate, soundfont, cps)
+	# Настройки эха и зала берёт ПОСЛЕДНЕЕ пришедшее на орбиту событие —
+	# так же, как узлы в Strudel переиспользуются на орбиту.
+	var dict: Dictionary = value
+	var orb := _orbit(voice.orbit)
+	if dict.has("delaytime"):
+		orb["time"] = StrudelPattern._num(dict["delaytime"])
+	elif dict.has("delaysync"):
+		orb["time"] = StrudelPattern._num(dict["delaysync"]) / maxf(cps, 0.0001)
+	if dict.has("delayfeedback"):
+		orb["feedback"] = StrudelPattern._num(dict["delayfeedback"])
+	var rev := orb["reverb"] as StrudelReverb
+	if dict.has("roomsize") or dict.has("size") or dict.has("rsize"):
+		var rs: Variant = dict.get("roomsize", dict.get("size", dict.get("rsize", 2.0)))
+		rev.set_size(StrudelPattern._num(rs))
+	if dict.has("roomfade") or dict.has("rfade"):
+		rev.set_fade(StrudelPattern._num(dict.get("roomfade", dict.get("rfade", 0.0))))
+	if dict.has("roomlp") or dict.has("roomdim"):
+		rev.set_lowpass(StrudelPattern._num(dict.get("roomlp", 0.0)),
+			StrudelPattern._num(dict.get("roomdim", 0.0)))
 	voice.start(mix_rate)
 	# Удар ставится на ТОЧНЫЙ отсчёт внутри буфера, а не на его границу:
 	# иначе доли дрожали бы на размер буфера — это слышно как неровный ритм.

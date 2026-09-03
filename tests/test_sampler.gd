@@ -77,3 +77,38 @@ func test_wav_разбирается_в_отсчёты() -> void:
 	for v in data:
 		peak = maxf(peak, absf(v))
 	check(peak > 0.2 and peak <= 1.0, "значения в разумных пределах, пик %f" % peak)
+
+
+## Тон для проверки сжатых форматов: свой, синтезированный, чтобы в поставке
+## не было ни одного чужого звука.
+const TONE_DIR := "res://tests/fixtures"
+const TONE_HZ := 440.0
+
+
+func test_ogg_и_mp3_разбираются() -> void:
+	# 🔴 У сжатых форматов отсчётов напрямую не достать — разбор живёт внутри
+	# движка. Банк берёт их через проигрыватель, и частота при этом всегда
+	# СЕРВЕРНАЯ: пересчёт делает сам движок.
+	var bank := StrudelSampleBank.new()
+	bank.load_folder(ProjectSettings.globalize_path(TONE_DIR))
+	check(not bank.is_empty(), "банк с тонами не пуст: %d имён" % bank.count())
+	for ext in ["wav", "ogg", "mp3"]:
+		var path := ProjectSettings.globalize_path(TONE_DIR).path_join("tone." + ext)
+		var data := bank.pcm_of(path)
+		check(data.size() > 1000, "%s разобрался: %d отсчётов" % [ext, data.size()])
+		var rate := bank.rate_of(path)
+		check(rate > 8000.0, "%s: частота %f" % [ext, rate])
+		# Частота тона проверяется счётом переходов через ноль: у синуса их
+		# ровно два на период.
+		var crossings := 0
+		var prev := 0.0
+		var peak := 0.0
+		for v in data:
+			if (prev <= 0.0 and v > 0.0):
+				crossings += 1
+			prev = v
+			peak = maxf(peak, absf(v))
+		var seconds := float(data.size()) / rate
+		var hz := float(crossings) / maxf(seconds, 0.001)
+		eq_num(hz, TONE_HZ, 20.0, "%s: тон около 440 Гц (вышло %.0f)" % [ext, hz])
+		check(peak > 0.2, "%s: пик %f" % [ext, peak])

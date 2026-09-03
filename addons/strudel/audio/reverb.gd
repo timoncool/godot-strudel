@@ -15,7 +15,14 @@ extends RefCounted
 const COMB_MS := [29.7, 37.1, 41.1, 43.7]
 const ALLPASS_MS := [5.0, 1.7]
 
-var room_size := 0.7
+## Время затухания на шестьдесят децибел, в секундах. В Strudel это и есть
+## `roomsize` (`reverbGen.mjs:31` — «decayTime is the -60dB fade time»).
+var decay_time := 2.0
+## Наплыв входа, в секундах: `roomfade`.
+var fade_in := 0.0
+## Завал верхов в хвосте: с какой частоты начинает и куда приходит.
+var lp_start := 0.0
+var lp_end := 0.0
 var damping := 0.4
 
 var _combs: Array = []
@@ -24,6 +31,8 @@ var _comb_store: PackedFloat32Array = PackedFloat32Array()
 var _allpass: Array = []
 var _ap_idx: PackedInt32Array = PackedInt32Array()
 var _rate := 48000.0
+## Отклик каждой гребёнки, посчитанный из времени затухания.
+var _feedback := PackedFloat32Array()
 
 
 func setup(rate: float) -> void:
@@ -39,6 +48,7 @@ func setup(rate: float) -> void:
 		_combs.append(line)
 		_comb_idx.append(0)
 		_comb_store.append(0.0)
+	_update_feedback()
 	for ms in ALLPASS_MS:
 		var line := PackedFloat32Array()
 		line.resize(maxi(int(rate * ms / 1000.0), 1))
@@ -49,7 +59,6 @@ func setup(rate: float) -> void:
 func render(send: PackedFloat32Array, left: PackedFloat32Array, right: PackedFloat32Array, count: int) -> void:
 	if _combs.is_empty():
 		return
-	var feedback := clampf(0.7 + room_size * 0.28, 0.0, 0.98)
 	var damp := clampf(damping, 0.0, 0.95)
 
 	for i in count:
@@ -64,7 +73,7 @@ func render(send: PackedFloat32Array, left: PackedFloat32Array, right: PackedFlo
 			acc += sample
 			# затухание высоких в хвосте
 			_comb_store[c] = sample * (1.0 - damp) + _comb_store[c] * damp
-			line[idx] = input + _comb_store[c] * feedback
+			line[idx] = input + _comb_store[c] * _feedback[c]
 			_comb_idx[c] = (idx + 1) % line.size()
 		acc /= float(_combs.size())
 
@@ -87,3 +96,32 @@ func _silent() -> bool:
 		if absf(v) > 1e-6:
 			return false
 	return true
+
+
+func set_size(seconds: float) -> void:
+	## `roomsize` — это ВРЕМЯ ЗАТУХАНИЯ в секундах, а не отвлечённая «величина
+	## зала»: так его понимает Strudel. Отклик каждого гребенчатого фильтра
+	## считается из него по правилу шестидесяти децибел:
+	## `g = 10^(−3·длина/время)`.
+	decay_time = maxf(seconds, 0.01)
+	_update_feedback()
+
+
+func set_fade(seconds: float) -> void:
+	fade_in = maxf(seconds, 0.0)
+
+
+func set_lowpass(start_hz: float, end_hz: float) -> void:
+	## Завал верхов по ходу хвоста: `roomlp` и `roomdim`.
+	lp_start = maxf(start_hz, 0.0)
+	lp_end = maxf(end_hz, 0.0)
+	if lp_start > 0.0:
+		# Чем ниже потолок, тем сильнее глушение в гребёнках.
+		damping = clampf(1.0 - lp_start / 12000.0, 0.0, 0.95)
+
+
+func _update_feedback() -> void:
+	_feedback = PackedFloat32Array()
+	for ms in COMB_MS:
+		var seconds := float(ms) / 1000.0
+		_feedback.append(clampf(pow(10.0, -3.0 * seconds / decay_time), 0.0, 0.98))
