@@ -24,10 +24,17 @@ class Handler(BaseHTTPRequestHandler):
         self._cors()
         self.end_headers()
 
+    # Файлы, которые страница вправе забрать сама (чтобы не слать их врезкой в код).
+    SERVED = {
+        "corpus": HERE / "corpus.json",
+        "track": HERE.parent.parent / "examples" / "full_track" / "kuvshinka.js",
+    }
+
     def do_GET(self):
-        """Отдаёт корпус, чтобы страница забрала его сама, а не получала врезкой в код."""
         name = self.path.strip("/") or "corpus"
-        src = HERE / f"{name}.json"
+        src = self.SERVED.get(name)
+        if src is None:
+            src = HERE / f"{name}.json"
         if not src.is_file():
             self.send_response(404)
             self._cors()

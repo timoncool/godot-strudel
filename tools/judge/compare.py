@@ -67,11 +67,16 @@ def frac(text: str) -> float:
 
 
 def main() -> int:
+    global GOLDEN, MINE
     only = ""
     verbose = False
     for arg in sys.argv[1:]:
         if arg.startswith("--only="):
             only = arg[7:]
+        elif arg == "--track":
+            # Главная приёмка: целый трек вместо корпуса выражений.
+            GOLDEN = HERE / "golden" / "track_haps.json"
+            MINE = HERE / "golden" / "godot_track.json"
         elif arg in ("-v", "--verbose"):
             verbose = True
 

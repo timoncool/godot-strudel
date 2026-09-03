@@ -26,11 +26,16 @@ const OPS := {
 const BARE_METHODS := ["rev", "revv", "press", "palindrome", "brak", "hurry",
 	"degrade", "undegrade", "invert", "inv", "round", "floor", "ceil"]
 
-## Показ и отладка — в звуке ничего не меняют, но встречаются в чужом коде
-## сплошь и рядом. Их надо ПРОПУСКАТЬ, а не падать на них.
-const PASSTHROUGH := ["_scope", "scope", "_punchcard", "punchcard", "_pianoroll",
-	"pianoroll", "_spiral", "color", "log", "logValues", "analyze", "fft",
+## Показ и отладка — на звук не влияют, но встречаются в чужом коде сплошь и
+## рядом. Их надо ПРОПУСКАТЬ, а не падать на них.
+const PASSTHROUGH := ["_punchcard", "punchcard", "_pianoroll",
+	"pianoroll", "_spiral", "color", "log", "logValues",
 	"onTrigger", "tag", "_pitchwheel", "markcss"]
+
+## Осциллоскоп. Своей картинки у плагина нет, но пометку он ставит ТУ ЖЕ, что
+## Булка (`analyze: 1`), — иначе значения событий расходятся с эталоном на
+## ровном месте. Игра вольна прочитать её и нарисовать свою волну.
+const SCOPE_METHODS := ["_scope", "scope"]
 
 
 static func is_method_name(name: String) -> bool:
@@ -217,6 +222,8 @@ const _METHODS := {
 static func method_call(rt, pat: StrudelPattern, name: String, args: Array) -> Variant:
 	if PASSTHROUGH.has(name):
 		return pat
+	if SCOPE_METHODS.has(name):
+		return StrudelControls.apply(pat, "analyze", 1)
 
 	match name:
 		# — время —
