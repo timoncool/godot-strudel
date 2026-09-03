@@ -25,6 +25,15 @@ const _FAREY_N := 10000000
 
 
 func _init(numerator: Variant = 0, denominator: Variant = null) -> void:
+	# Горячий путь: целое без знаменателя. Через общий разбор он стоил бы
+	# лишнего объекта на КАЖДУЮ арифметическую операцию — а их в запросе
+	# паттерна десятки тысяч.
+	if denominator == null and numerator is int:
+		var i: int = numerator
+		s = -1 if i < 0 else 1
+		n = absi(i)
+		d = 1
+		return
 	if denominator != null:
 		var a := _to_frac(numerator)
 		var b := _to_frac(denominator)
@@ -200,31 +209,94 @@ static func _from_string(text: String) -> _Parts:
 # ── арифметика ───────────────────────────────────────────────────────────────
 
 func add(other: Variant) -> StrudelFraction:
+	if other is StrudelFraction:
+		var f: StrudelFraction = other
+		if d == f.d:
+			return _make(s * n + f.s * f.n, d)
+		return _make(s * n * f.d + f.s * f.n * d, d * f.d)
 	var o := _to_frac(other)
-	return _raw(s * n * o.d + o.s * o.n * d, d * o.d)
+	return _make(s * n * o.d + o.s * o.n * d, d * o.d)
 
 
 func sub(other: Variant) -> StrudelFraction:
+	if other is StrudelFraction:
+		var f: StrudelFraction = other
+		if d == f.d:
+			return _make(s * n - f.s * f.n, d)
+		return _make(s * n * f.d - f.s * f.n * d, d * f.d)
 	var o := _to_frac(other)
-	return _raw(s * n * o.d - o.s * o.n * d, d * o.d)
+	return _make(s * n * o.d - o.s * o.n * d, d * o.d)
 
 
 func mul(other: Variant) -> StrudelFraction:
-	var o := _to_frac(other)
 	# Сокращение крест-накрест ДО умножения — держит числа в пределах int64.
+	if other is StrudelFraction:
+		var f: StrudelFraction = other
+		var h1 := _gcd_int(n, f.d)
+		var h2 := _gcd_int(f.n, d)
+		return _make_signed(s * f.s, (n / h1) * (f.n / h2), (d / h2) * (f.d / h1))
+	var o := _to_frac(other)
 	var g1 := _gcd_int(n, o.d)
 	var g2 := _gcd_int(o.n, d)
-	return _raw_signed(s * o.s, (n / g1) * (o.n / g2), (d / g2) * (o.d / g1))
+	return _make_signed(s * o.s, (n / g1) * (o.n / g2), (d / g2) * (o.d / g1))
 
 
 func div(other: Variant) -> StrudelFraction:
+	if other is StrudelFraction:
+		var f: StrudelFraction = other
+		if f.n == 0:
+			push_error("StrudelFraction: деление на ноль")
+			return StrudelFraction.new(0)
+		var h1 := _gcd_int(n, f.n)
+		var h2 := _gcd_int(f.d, d)
+		return _make_signed(s * f.s, (n / h1) * (f.d / h2), (d / h2) * (f.n / h1))
 	var o := _to_frac(other)
 	if o.n == 0:
 		push_error("StrudelFraction: деление на ноль")
 		return StrudelFraction.new(0)
 	var g1 := _gcd_int(n, o.n)
 	var g2 := _gcd_int(o.d, d)
-	return _raw_signed(s * o.s, (n / g1) * (o.d / g2), (d / g2) * (o.n / g1))
+	return _make_signed(s * o.s, (n / g1) * (o.d / g2), (d / g2) * (o.n / g1))
+
+
+static func _make(num: int, den: int) -> StrudelFraction:
+	## Прямая сборка без разбора Variant — этим живёт весь горячий путь.
+	var f := StrudelFraction.new()
+	var sign_ := 1
+	if num < 0:
+		num = -num
+		sign_ = -1
+	if den < 0:
+		den = -den
+		sign_ = -sign_
+	if den != 1:
+		var g := _gcd_int(num, den)
+		if g > 1:
+			num /= g
+			den /= g
+	f.s = 1 if num == 0 else sign_
+	f.n = num
+	f.d = den if den != 0 else 1
+	return f
+
+
+static func _make_signed(sign_: int, num: int, den: int) -> StrudelFraction:
+	var f := StrudelFraction.new()
+	if num < 0:
+		num = -num
+		sign_ = -sign_
+	if den < 0:
+		den = -den
+		sign_ = -sign_
+	if den != 1:
+		var g := _gcd_int(num, den)
+		if g > 1:
+			num /= g
+			den /= g
+	f.s = 1 if num == 0 else (1 if sign_ >= 0 else -1)
+	f.n = num
+	f.d = den if den != 0 else 1
+	return f
 
 
 func mod(other: Variant = null) -> StrudelFraction:
@@ -259,7 +331,7 @@ func floor_() -> StrudelFraction:
 	var q := (s * n) / d
 	if s < 0 and n % d > 0:
 		q -= 1
-	return _raw(q, 1)
+	return StrudelFraction.new(q)
 
 
 func ceil_() -> StrudelFraction:
@@ -296,6 +368,13 @@ func _raw_signed(sign_: int, num: int, den: int) -> StrudelFraction:
 # ── сравнение ────────────────────────────────────────────────────────────────
 
 func compare(other: Variant) -> int:
+	if other is StrudelFraction:
+		var f: StrudelFraction = other
+		var a := s * n * f.d
+		var b := f.s * f.n * d
+		if a < b:
+			return -1
+		return 1 if a > b else 0
 	var o := _to_frac(other)
 	var left := s * n * o.d
 	var right := o.s * o.n * d

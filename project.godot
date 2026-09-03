@@ -6,6 +6,7 @@ config_version=5
 [application]
 
 config/name="Strudel for Godot"
+run/main_scene="res://examples/01_minimal_beat/minimal_beat.tscn"
 config/description="Живой код Strudel внутри движка: паттерны, сэмплер, синтез, эффекты."
 config/features=PackedStringArray("4.7")
 

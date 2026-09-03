@@ -1,0 +1,63 @@
+@tool
+class_name StrudelEnvelope
+extends RefCounted
+
+## Огибающая ADSR. Перенос `getADSRValues` и `getParamADSR`
+## из `packages/superdough/helpers.mjs`.
+##
+## 🔴 Значения по умолчанию НЕ нулевые и не «музыкальные на глаз»:
+## [0.001, 0.001, 1, 0.01]. И они меняются от того, ЧТО задал пользователь:
+## `.decay(0.2)` без attack ведёт себя как чистый спад, а `.attack(0.3)` без
+## decay — как нарастание с полным сустейном. Это правило из helpers.mjs:191,
+## без него `.attack(0.3).release(1.2)` в треке звучит обрубленно.
+
+const ENV_MIN := 0.001
+const RELEASE_MIN := 0.01
+const ENV_MAX := 1.0
+
+var attack := ENV_MIN
+var decay := ENV_MIN
+var sustain := ENV_MAX
+var release := RELEASE_MIN
+
+
+static func from_values(a: Variant, d: Variant, s: Variant, r: Variant) -> StrudelEnvelope:
+	var env := StrudelEnvelope.new()
+	if a == null and d == null and s == null and r == null:
+		return env
+	var sus: float
+	if s != null:
+		sus = float(s)
+	elif (a != null and d == null) or (a == null and d == null):
+		sus = ENV_MAX
+	else:
+		sus = ENV_MIN
+	env.attack = maxf(float(a) if a != null else 0.0, ENV_MIN)
+	env.decay = maxf(float(d) if d != null else 0.0, ENV_MIN)
+	env.sustain = minf(sus, ENV_MAX)
+	env.release = maxf(float(r) if r != null else 0.0, RELEASE_MIN)
+	return env
+
+
+func level_at(time: float, note_length: float) -> float:
+	## Уровень в момент `time` от начала ноты. После `note_length` — отпускание.
+	if time < 0.0:
+		return 0.0
+	if time < attack:
+		return time / attack
+	var held := time - attack
+	if held < decay:
+		# спад от единицы к сустейну
+		return 1.0 + (sustain - 1.0) * (held / decay)
+	if time < note_length:
+		return sustain
+	var since_release := time - note_length
+	if since_release >= release:
+		return 0.0
+	var from_level := sustain if note_length > attack + decay else level_at(note_length, note_length + 1e9)
+	return from_level * (1.0 - since_release / release)
+
+
+func total_length(note_length: float) -> float:
+	## Сколько всего звучит нота вместе с отпусканием.
+	return note_length + release
