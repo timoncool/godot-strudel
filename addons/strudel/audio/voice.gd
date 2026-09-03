@@ -50,6 +50,11 @@ var lpq := 1.0
 var hpf := 0.0
 var hpq := 1.0
 
+var bpf := 0.0
+var bpq := 1.0
+## Гласная: "a", "e", "i", "o", "u", "ae", "aa", "oe", "ue", "y"… Пусто — нет.
+var vowel := ""
+
 var crush := 0.0
 var coarse := 0.0
 var shape := 0.0
@@ -76,6 +81,12 @@ var _lp := [0.0, 0.0, 0.0, 0.0]
 var _hp := [0.0, 0.0, 0.0, 0.0]
 var _lp_coef := PackedFloat32Array()
 var _hp_coef := PackedFloat32Array()
+var _bp := [0.0, 0.0, 0.0, 0.0]
+var _bp_coef := PackedFloat32Array()
+# Гласная — пять параллельных полосовых, их состояния лежат подряд.
+var _vw_coef := PackedFloat32Array()
+var _vw_gain := PackedFloat32Array()
+var _vw_state := PackedFloat32Array()
 var _coarse_hold := 0.0
 var _coarse_count := 0
 
@@ -96,7 +107,32 @@ func start(mix_rate: float) -> void:
 		envelope = StrudelEnvelope.new()
 	_lp_coef = _biquad_lowpass(lpf, lpq) if lpf > 0.0 else PackedFloat32Array()
 	_hp_coef = _biquad_highpass(hpf, hpq) if hpf > 0.0 else PackedFloat32Array()
+	_bp_coef = _biquad_bandpass(bpf, bpq) if bpf > 0.0 else PackedFloat32Array()
+	_bp = [0.0, 0.0, 0.0, 0.0]
+	_setup_vowel()
 	active = true
+
+
+func _setup_vowel() -> void:
+	_vw_coef = PackedFloat32Array()
+	_vw_gain = PackedFloat32Array()
+	_vw_state = PackedFloat32Array()
+	if vowel == "":
+		return
+	var formant: Dictionary = StrudelVowels.get_formant(vowel)
+	if formant.is_empty():
+		push_warning("Strudel: не знаю гласной \"%s\"" % vowel)
+		return
+	var freqs: Array = formant["freqs"]
+	var qs: Array = formant["qs"]
+	var gains: Array = formant["gains"]
+	for i in freqs.size():
+		var c := _biquad_bandpass(float(freqs[i]), float(qs[i]))
+		for k in 5:
+			_vw_coef.append(c[k])
+		_vw_gain.append(float(gains[i]))
+		for k in 4:
+			_vw_state.append(0.0)
 
 
 func total_frames() -> int:
@@ -169,6 +205,19 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 	var hx2: float = _hp[1]
 	var hy1: float = _hp[2]
 	var hy2: float = _hp[3]
+
+	var use_bp := not _bp_coef.is_empty()
+	var pb0 := _bp_coef[0] if use_bp else 0.0
+	var pb1 := _bp_coef[1] if use_bp else 0.0
+	var pb2 := _bp_coef[2] if use_bp else 0.0
+	var pa1 := _bp_coef[3] if use_bp else 0.0
+	var pa2 := _bp_coef[4] if use_bp else 0.0
+	var px1: float = _bp[0]
+	var px2: float = _bp[1]
+	var py1: float = _bp[2]
+	var py2: float = _bp[3]
+	var use_vowel := not _vw_gain.is_empty()
+	var vowel_bands := _vw_gain.size()
 
 	var use_crush := crush > 0.0
 	var crush_steps := pow(2.0, crush - 1.0) if use_crush else 1.0
@@ -292,6 +341,31 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 			hy2 = hy1
 			hy1 = hy
 			s = hy
+		if use_bp:
+			var py := pb0 * s + pb1 * px1 + pb2 * px2 - pa1 * py1 - pa2 * py2
+			px2 = px1
+			px1 = s
+			py2 = py1
+			py1 = py
+			s = py
+		if use_vowel:
+			# Гласная — пять полосовых ПАРАЛЛЕЛЬНО, сумма с весами и подъёмом
+			# на восемь (`vowel.mjs:66`). Последовательно они дали бы тишину.
+			var acc := 0.0
+			for band in vowel_bands:
+				var ci := band * 5
+				var si := band * 4
+				var xin := s
+				var yv: float = (_vw_coef[ci] * xin + _vw_coef[ci + 1] * _vw_state[si]
+					+ _vw_coef[ci + 2] * _vw_state[si + 1]
+					- _vw_coef[ci + 3] * _vw_state[si + 2]
+					- _vw_coef[ci + 4] * _vw_state[si + 3])
+				_vw_state[si + 1] = _vw_state[si]
+				_vw_state[si] = xin
+				_vw_state[si + 3] = _vw_state[si + 2]
+				_vw_state[si + 2] = yv
+				acc += yv * _vw_gain[band]
+			s = acc * 8.0
 		if use_coarse:
 			if _coarse_count % coarse_n == 0:
 				_coarse_hold = s
@@ -323,6 +397,10 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 	_hp[1] = hx2
 	_hp[2] = hy1
 	_hp[3] = hy2
+	_bp[0] = px1
+	_bp[1] = px2
+	_bp[2] = py1
+	_bp[3] = py2
 
 
 func _source_sample() -> float:
@@ -435,6 +513,15 @@ func _biquad_highpass(freq: float, q: float) -> PackedFloat32Array:
 	var b1 := -(1.0 + cw)
 	var a0 := 1.0 + alpha
 	return PackedFloat32Array([b0 / a0, b1 / a0, b0 / a0, (-2.0 * cw) / a0, (1.0 - alpha) / a0])
+
+
+func _biquad_bandpass(freq: float, q: float) -> PackedFloat32Array:
+	## Полосовой с постоянным пиком — как BiquadFilterNode type="bandpass".
+	var w := TAU * clampf(freq, 10.0, _rate * 0.45) / _rate
+	var alpha := sin(w) / (2.0 * maxf(q, 0.0001))
+	var cw := cos(w)
+	var a0 := 1.0 + alpha
+	return PackedFloat32Array([alpha / a0, 0.0, -alpha / a0, (-2.0 * cw) / a0, (1.0 - alpha) / a0])
 
 
 func _biquad(x: float, c: PackedFloat32Array, state: Array) -> float:

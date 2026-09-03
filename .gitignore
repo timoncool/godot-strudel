@@ -2,7 +2,14 @@
 .godot/
 *.import
 export_presets.cfg
+build/
 
-# Выгрузки сверки: порождаются прогоном, в поставке не нужны
+# Выгрузки сверки: порождаются прогоном
 tools/judge/golden/godot.json
+tools/judge/golden/godot_track.json
 tools/judge/*.log
+tools/judge/golden/*.wav
+tools/judge/golden/*.raw
+
+# Пак сэмплов для примера — собирается make_pack.py
+examples/04_own_samples/pack/

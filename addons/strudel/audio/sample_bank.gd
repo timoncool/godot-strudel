@@ -50,8 +50,13 @@ func load_folder(path: String) -> int:
 	# 1) карты формата Strudel
 	for file in _list(path, [".json"]):
 		_load_map(file)
-	# 2) отдельные звуки: имя папки или файла становится именем инструмента
-	_scan_audio(path, "")
+	var from_maps := {}
+	for key in entries:
+		from_maps[key] = true
+	# 2) отдельные звуки: имя папки или файла становится именем инструмента.
+	# 🔴 Только то, чего НЕТ в картах: иначе один и тот же звук попадает в
+	# список дважды, и `bd:1` начинает указывать не на тот файл.
+	_scan_audio(path, "", from_maps)
 	return entries.size()
 
 
@@ -74,25 +79,28 @@ func _list(path: String, suffixes: Array) -> Array:
 	return out
 
 
-func _scan_audio(path: String, prefix: String) -> void:
+func _scan_audio(path: String, prefix: String, skip: Dictionary) -> void:
 	var dir := DirAccess.open(path)
 	if dir == null:
 		return
+	var touched := {}
 	dir.list_dir_begin()
 	var name := dir.get_next()
 	while name != "":
 		var full := path.path_join(name)
 		if dir.current_is_dir():
 			if not name.begins_with("."):
-				_scan_audio(full, name)
+				_scan_audio(full, name, skip)
 		elif name.to_lower().ends_with(".wav"):
 			var key := prefix if prefix != "" else name.get_basename()
-			if not entries.has(key):
-				entries[key] = {"files": [], "pitched": {}}
-			(entries[key]["files"] as Array).append(full)
+			if not skip.has(key):
+				if not entries.has(key):
+					entries[key] = {"files": [], "pitched": {}}
+				(entries[key]["files"] as Array).append(full)
+				touched[key] = true
 		name = dir.get_next()
 	dir.list_dir_end()
-	for key in entries:
+	for key in touched:
 		(entries[key]["files"] as Array).sort()
 
 

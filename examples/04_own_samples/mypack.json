@@ -1,0 +1,19 @@
+{
+  "_base": "pack/",
+  "bd": [
+    "bd/bd.wav",
+    "bd/bd_low.wav"
+  ],
+  "sd": [
+    "sd/sd.wav"
+  ],
+  "hh": [
+    "hh/hh.wav",
+    "hh/hh_open.wav"
+  ],
+  "bell": {
+    "C3": "bell/c3.wav",
+    "G3": "bell/g3.wav",
+    "C4": "bell/c4.wav"
+  }
+}

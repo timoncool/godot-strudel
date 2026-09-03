@@ -28,6 +28,7 @@ class Handler(BaseHTTPRequestHandler):
     SERVED = {
         "corpus": HERE / "corpus.json",
         "track": HERE.parent.parent / "examples" / "full_track" / "kuvshinka.js",
+        "effects": HERE / "effects.json",
     }
 
     def do_GET(self):
