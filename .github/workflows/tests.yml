@@ -37,10 +37,21 @@ jobs:
           godot --headless --path . --script res://tools/judge/run_corpus.gd
           python3 tools/judge/compare.py
 
-      - name: Главная приёмка — целый трек
+      - name: Главная приёмка — тридцать два трека сообщества
+        run: |
+          godot --headless --path . --script res://tools/judge/run_tunes.gd
+          python3 tools/judge/compare.py --tunes
+
+      - name: Целый трек, шестьдесят четыре круга
         run: |
           godot --headless --path . --script res://tools/judge/run_track.gd
           python3 tools/judge/compare.py --track
+
+      - name: Охват словаря Strudel
+        run: |
+          godot --headless --path . --script res://tools/judge/check_coverage.gd | tee coverage.log
+          grep -q "НЕТ функций (0)" coverage.log
+          grep -q "НЕТ параметров (0)" coverage.log
 
       - name: Установка с нуля в пустой проект
         run: bash tools/check_clean_install.sh
