@@ -1,0 +1,26 @@
+[
+ {
+  "id": "smp_kick",
+  "expr": "s(\"spk_kick*4\").gain(0.8)"
+ },
+ {
+  "id": "smp_kit",
+  "expr": "s(\"spk_kick spk_snare spk_hat spk_hat\").gain(0.8)"
+ },
+ {
+  "id": "smp_speed",
+  "expr": "s(\"spk_kick*2\").speed(\"1 1.5\").gain(0.8)"
+ },
+ {
+  "id": "smp_n",
+  "expr": "s(\"spk_hat*4\").n(\"0 1 2 3\").gain(0.8)"
+ },
+ {
+  "id": "smp_lpf",
+  "expr": "s(\"spk_snare*2\").lpf(700).gain(0.8)"
+ },
+ {
+  "id": "smp_begin",
+  "expr": "s(\"spk_drumloop\").begin(0.25).end(0.75).gain(0.8)"
+ }
+]

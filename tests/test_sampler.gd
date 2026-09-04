@@ -112,3 +112,76 @@ func test_ogg_и_mp3_разбираются() -> void:
 		var hz := float(crossings) / maxf(seconds, 0.001)
 		eq_num(hz, TONE_HZ, 20.0, "%s: тон около 440 Гц (вышло %.0f)" % [ext, hz])
 		check(peak > 0.2, "%s: пик %f" % [ext, peak])
+
+
+func test_wav_24_бита_читается_без_потери() -> void:
+	# 🔴 РЕГРЕССИЯ. `AudioStreamWAV` знает ровно четыре вида — 8 бит, 16 бит,
+	# IMA-ADPCM и QOA (справка движка, class_audiostreamwav). Двадцати четырёх
+	# бит там НЕТ, и загрузчик молча ужимает файл до шестнадцати. Библиотеки
+	# живых инструментов пишутся в 24 бита и с запасом по уровню: у сэмпла с
+	# пиком 0.08 от шестнадцати бит работают одиннадцать. Замерено на VCSL:
+	# через движок выходило 3929 разных значений отсчёта, своим разбором —
+	# 97522, то есть в двадцать пять раз подробнее.
+	var path := "user://_probe24.wav"
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	check(f != null, "временный файл создался")
+	if f == null:
+		return
+	# Тихая синусоида: её ступеньки видно только при полной разрядности.
+	var frames := 512
+	var body := PackedByteArray()
+	for i in frames:
+		var v := int(round(sin(TAU * 7.3 * float(i) / float(frames)) * 0.02 * 8388607.0))
+		if v < 0:
+			v += 0x1000000
+		body.append(v & 0xFF)
+		body.append((v >> 8) & 0xFF)
+		body.append((v >> 16) & 0xFF)
+	f.store_buffer("RIFF".to_ascii_buffer())
+	f.store_32(36 + body.size())
+	f.store_buffer("WAVEfmt ".to_ascii_buffer())
+	f.store_32(16)
+	f.store_16(1)          # целые со знаком
+	f.store_16(1)          # моно
+	f.store_32(44100)
+	f.store_32(44100 * 3)
+	f.store_16(3)
+	f.store_16(24)         # ДВАДЦАТЬ ЧЕТЫРЕ БИТА
+	f.store_buffer("data".to_ascii_buffer())
+	f.store_32(body.size())
+	f.store_buffer(body)
+	f.close()
+
+	# 🔴 Читаем ЧЕРЕЗ РАБОЧИЙ ПУТЬ (`pcm_of` → `_pcm`), а не разборщик напрямую:
+	# иначе проверка зелёная и тогда, когда разборщик есть, но не подключён.
+	var real := ProjectSettings.globalize_path(path)
+	var bank := StrudelSampleBank.new()
+	var data := bank.pcm_of(real)
+	check(not data.is_empty(), "сэмпл прочитался")
+	if data.is_empty():
+		return
+	eq(int(bank.rate_of(real)), 44100, "частота из заголовка")
+	eq(data.size(), frames, "число отсчётов")
+
+	# Сверка с движковым путём: он обязан оказаться ГРУБЕЕ.
+	var wav := AudioStreamWAV.load_from_file(real)
+	var engine_levels := {}
+	if wav != null:
+		for v in StrudelSampleBank._decode_wav(wav):
+			engine_levels[snappedf(v, 1e-9)] = true
+	var levels := {}
+	for v in data:
+		levels[snappedf(v, 1e-9)] = true
+	check(levels.size() > engine_levels.size(),
+		"свой разбор подробнее движкового: %d разных значений против %d"
+		% [levels.size(), engine_levels.size()])
+
+	var worst := 0.0
+	for i in frames:
+		var want := sin(TAU * 7.3 * float(i) / float(frames)) * 0.02
+		worst = maxf(worst, absf(float(data[i]) - want))
+	# 16 бит на амплитуде 0.02 дают ступеньку 3.05e-05 — этот допуск её не пропустит.
+	check(worst < 2e-6,
+		"отсчёты совпали с исходными: худшее отклонение %s" % String.num_scientific(worst))
+
+	DirAccess.remove_absolute(real)

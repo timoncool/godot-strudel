@@ -30,6 +30,7 @@ class Handler(BaseHTTPRequestHandler):
         "track": HERE.parent.parent / "examples" / "full_track" / "kuvshinka.js",
         "effects": HERE / "effects.json",
         "tunes": HERE / "tunes_bundle.json",
+        "samplesaudio": HERE / "samples_audio.json",
     }
 
     def do_GET(self):

@@ -14,3 +14,12 @@ tools/judge/golden/*.raw
 
 # Пак сэмплов для примера — собирается make_pack.py
 examples/04_own_samples/pack/
+
+# Рабочее для сверки звука — на чужих машинах этого нет и быть не должно:
+# банк VCSL подключается стыком к папке пользователя, треки галереи — чужие
+# работы, скачанное пианино осталось от прерванной попытки.
+tools/judge/vcslbank/
+tools/judge/gallery/
+tools/judge/refbank/
+tools/judge/tunes_audio.json
+tools/judge/tunes_audio_bundle.json

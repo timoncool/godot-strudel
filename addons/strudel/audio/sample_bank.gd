@@ -217,6 +217,22 @@ func _pcm(path: String) -> PackedFloat32Array:
 		return _cache[path]
 	var ext := path.get_extension().to_lower()
 	if ext == "wav":
+		# 🔴 WAV РАЗБИРАЕТСЯ САМИМ ПЛАГИНОМ, а не движком.
+		#
+		# `AudioStreamWAV.load_from_file` умеет отдавать только 8 и 16 бит:
+		# 24-битный файл он ужимает до 16 (проверено — формат приходит 1 при
+		# честных 24 битах в файле). Библиотеки живых инструментов пишутся в
+		# 24 бита и с большим запасом по уровню: у сэмпла псалтериума пик
+		# 0.083, то есть от шестнадцати бит работают одиннадцать, и всё, что
+		# тише пика на полсотни децибел, уходит в ступеньку квантования.
+		# Замерено сверкой с Булкой: у ноты пропадала основная частота —
+		# 22 дБ разницы там, где остальной спектр сходился до децибела.
+		var mine := _read_wav(path)
+		if not mine.is_empty():
+			_cache[path] = mine["data"]
+			_rates[path] = float(mine["rate"])
+			return _cache[path]
+		# Сжатые виды (IMA-ADPCM, QOA) разбирает движок.
 		var wav := AudioStreamWAV.load_from_file(path)
 		if wav == null:
 			return _no_pcm(path, "не прочитал")
@@ -311,3 +327,99 @@ static func _decode_wav(wav: AudioStreamWAV) -> PackedFloat32Array:
 		_:
 			push_warning("Strudel: формат WAV %d пока не разбирается (нужен 8 или 16 бит)" % wav.format)
 	return out
+
+
+static func _read_wav(path: String) -> Dictionary:
+	## Свой разбор RIFF/WAVE. → {data: моно float, rate: частота} либо пусто,
+	## если вид не наш (сжатый) — тогда пусть пробует движок.
+	##
+	## Берётся то, чего не отдаёт `AudioStreamWAV`: 24 бита, 32 бита целыми и
+	## 32/64 бита с плавающей точкой. Именно в них пишутся банки живых
+	## инструментов, и именно на них движковая загрузка теряет тихое.
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return {}
+	var size := f.get_length()
+	if size < 44 or f.get_buffer(4).get_string_from_ascii() != "RIFF":
+		f.close()
+		return {}
+	f.seek(8)
+	if f.get_buffer(4).get_string_from_ascii() != "WAVE":
+		f.close()
+		return {}
+
+	var fmt := 0
+	var channels := 0
+	var rate := 0
+	var bits := 0
+	var data_at := -1
+	var data_len := 0
+	var pos := 12
+	while pos + 8 <= size:
+		f.seek(pos)
+		var cid := f.get_buffer(4).get_string_from_ascii()
+		var clen := f.get_32()
+		var body := pos + 8
+		if cid == "fmt ":
+			f.seek(body)
+			fmt = f.get_16()
+			channels = f.get_16()
+			rate = f.get_32()
+			f.get_32()  # средняя скорость
+			f.get_16()  # выравнивание блока
+			bits = f.get_16()
+			if fmt == 0xFFFE and clen >= 40:
+				# Расширенный вид: настоящий номер лежит в GUID.
+				f.seek(body + 24)
+				fmt = f.get_16()
+		elif cid == "data":
+			data_at = body
+			data_len = clen
+		pos = body + clen + (clen & 1)
+
+	if data_at < 0 or channels <= 0 or rate <= 0:
+		f.close()
+		return {}
+	data_len = mini(data_len, size - data_at)
+	# 1 — целые со знаком, 3 — с плавающей точкой. Остальное (ADPCM и прочее)
+	# отдаём движку.
+	if fmt != 1 and fmt != 3:
+		f.close()
+		return {}
+	var step := bits / 8
+	if step <= 0 or (fmt == 3 and bits != 32 and bits != 64):
+		f.close()
+		return {}
+
+	f.seek(data_at)
+	var raw := f.get_buffer(data_len)
+	f.close()
+	var frames := data_len / (step * channels)
+	var out := PackedFloat32Array()
+	out.resize(frames)
+	var inv := 1.0 / float(channels)
+	for i in frames:
+		var acc := 0.0
+		for c in channels:
+			var at := (i * channels + c) * step
+			match [fmt, bits]:
+				[1, 8]:
+					# 8 бит в WAV — БЕЗ знака, смещены на 128.
+					acc += (float(raw.decode_u8(at)) - 128.0) / 128.0
+				[1, 16]:
+					acc += float(raw.decode_s16(at)) / 32768.0
+				[1, 24]:
+					var v := int(raw.decode_u8(at)) 						| (int(raw.decode_u8(at + 1)) << 8) 						| (int(raw.decode_u8(at + 2)) << 16)
+					if v >= 0x800000:
+						v -= 0x1000000
+					acc += float(v) / 8388608.0
+				[1, 32]:
+					acc += float(raw.decode_s32(at)) / 2147483648.0
+				[3, 32]:
+					acc += raw.decode_float(at)
+				[3, 64]:
+					acc += raw.decode_double(at)
+				_:
+					return {}
+		out[i] = acc * inv
+	return {"data": out, "rate": rate}
