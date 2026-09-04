@@ -90,7 +90,8 @@ static func math_call(name: String, args: Array) -> Variant:
 		"sin": return sin(a)
 		"cos": return cos(a)
 		"tan": return tan(a)
-		"random": return randf()
+		# Общий генератор игры не трогаем — см. StrudelVoice._rng.
+		"random": return StrudelVoice.random()
 		"sign": return signf(a)
 		"trunc": return float(int(a))
 	push_error("Strudel: Math.%s не поддержана" % name)

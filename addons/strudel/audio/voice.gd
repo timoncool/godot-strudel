@@ -144,6 +144,14 @@ var _super_l := 0.0
 var _super_r := 0.0
 var _sample_pos := 0.0
 var _rate := 48000.0
+## СВОЙ генератор случайного — на весь плагин один.
+##
+## 🔴 ОБЩИЙ (`_rng.randf()`) ТРОГАТЬ НЕЛЬЗЯ. Он один на всю игру: шум и стая пил
+## тянули бы из той же череды, что раскладка вещей и всё прочее, и каждая
+## сыгранная нота СДВИГАЛА БЫ ход игры. Замечено на гейте обхода: раскладка
+## стала другой, вещи полезли друг на друга — а виноват был звук.
+static var _rng := RandomNumberGenerator.new()
+
 var _brown := 0.0
 var _pink := PackedFloat32Array()
 # Состояния биквадов (по два прошлых входа и выхода).
@@ -195,7 +203,7 @@ func start(mix_rate: float) -> void:
 		for i in count:
 			# 🔴 Начальные фазы СЛУЧАЙНЫ — так в оригинале. Одинаковые фазы
 			# дали бы в первый миг сложение всех голосов в один щелчок.
-			_super_phase[i] = randf()
+			_super_phase[i] = _rng.randf()
 	_fm_phase = PackedFloat32Array()
 	if not fm_sources.is_empty():
 		_fm_phase.resize(fm_sources.size())
@@ -606,11 +614,11 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 			if phase >= 1.0:
 				phase -= 1.0
 		elif src == Source.WHITE:
-			raw = randf() * 2.0 - 1.0
+			raw = _rng.randf() * 2.0 - 1.0
 		elif src == Source.PINK:
 			raw = _pink_sample()
 		elif src == Source.BROWN:
-			_brown = clampf(_brown + (randf() * 2.0 - 1.0) * 0.02, -1.0, 1.0)
+			_brown = clampf(_brown + (_rng.randf() * 2.0 - 1.0) * 0.02, -1.0, 1.0)
 			raw = _brown * 3.0
 
 		# ── огибающая (тот же расчёт, что в StrudelEnvelope) ──
@@ -782,11 +790,11 @@ func _source_sample() -> float:
 			_advance_phase()
 			return v4
 		Source.WHITE:
-			return randf() * 2.0 - 1.0
+			return _rng.randf() * 2.0 - 1.0
 		Source.PINK:
 			return _pink_sample()
 		Source.BROWN:
-			_brown += (randf() * 2.0 - 1.0) * 0.02
+			_brown += (_rng.randf() * 2.0 - 1.0) * 0.02
 			_brown = clampf(_brown, -1.0, 1.0)
 			return _brown * 3.0
 	return 0.0
@@ -800,7 +808,7 @@ func _advance_phase() -> void:
 
 func _pink_sample() -> float:
 	## Розовый шум методом Восса—Маккартни (семь полос).
-	var white := randf() * 2.0 - 1.0
+	var white := _rng.randf() * 2.0 - 1.0
 	_pink[0] = 0.99886 * _pink[0] + white * 0.0555179
 	_pink[1] = 0.99332 * _pink[1] + white * 0.0750759
 	_pink[2] = 0.96900 * _pink[2] + white * 0.1538520
@@ -1235,3 +1243,14 @@ static func _ramp(v0: float, v1: float, t0: float, t1: float, t: float,
 	if t <= t0:
 		return v0
 	return v0 + (v1 - v0) * (t - t0) / (t1 - t0)
+
+
+static func random() -> float:
+	## Случайное число плагина. Наружу — чтобы игра могла задать зерно и
+	## получить воспроизводимый шум.
+	return _rng.randf()
+
+
+static func set_random_seed(seed_value: int) -> void:
+	## Зерно шума и стаи пил. Общего генератора игры это не касается.
+	_rng.seed = seed_value
