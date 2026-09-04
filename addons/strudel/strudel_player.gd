@@ -160,8 +160,31 @@ func play(new_code: String = "") -> bool:
 	# Сэмплы разбираются наперёд, чтобы первая нота каждой высоты не вставала
 	# посреди фразы.
 	if _engine.bank != null and _engine.bank.has_method("prime_async"):
-		_engine.bank.prime_async()
+		# Прогреваем ровно те наборы, которые называет сам код: у большого
+		# банка прогрев целиком читает гигабайты впустую.
+		_engine.bank.prime_async(_voices_in_code())
 	return true
+
+
+func _voices_in_code() -> PackedStringArray:
+	## Какие наборы банка упоминает код. Без разбора синтаксиса: просто ищем
+	## имена самого банка в тексте — надёжнее любого шаблона и не ломается на
+	## незнакомой записи. Лишнее имя в списке стоит одного разбора файла,
+	## пропущенное — рывка посреди фразы, поэтому ошибаться лучше в плюс.
+	var out: PackedStringArray = []
+	if _engine.bank == null:
+		return out
+	for key in _engine.bank.entries.keys():
+		var name := String(key)
+		if name.length() >= 2 and code.contains(name):
+			out.append(name)
+	return out
+
+
+func restart_clock() -> void:
+	## Начать с начала формы. Нужно, когда несколько плееров ведут один трек
+	## разными партиями: собираются они по очереди, а идти обязаны вместе.
+	_engine.reset_clock()
 
 
 func stop() -> void:
