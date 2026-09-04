@@ -149,6 +149,16 @@ Strudel сделали Alex McLean и участники проекта. Это�
 - **ETH (ERC20):** `0xb5db65adf478983186d4897ba92fe2c25c594a0c`
 - **USDT (TRC20):** `TQST9Lp2TjK6FiVkn4fwfGUee7NmkxEE7C`
 
+## Star History
+
+<a href="https://github.com/timoncool/godot-strudel/stargazers">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="docs/stars-dark.svg" />
+   <source media="(prefers-color-scheme: light)" srcset="docs/stars-light.svg" />
+   <img alt="Star History Chart" src="docs/stars-light.svg" />
+ </picture>
+</a>
+
 ## Лицензия
 
 **AGPL-3.0-or-later** — та же, что у Strudel, потому что это его порт. Если вы распространяете игру вместе с плагином, на игру ложатся те же условия. Прочтите [NOTICE.md](NOTICE.md) до того, как плагин попадёт в сборку.

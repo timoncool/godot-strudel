@@ -149,6 +149,16 @@ I build open-source software and do AI research. Most of what I create is free a
 - **ETH (ERC20):** `0xb5db65adf478983186d4897ba92fe2c25c594a0c`
 - **USDT (TRC20):** `TQST9Lp2TjK6FiVkn4fwfGUee7NmkxEE7C`
 
+## Star History
+
+<a href="https://github.com/timoncool/godot-strudel/stargazers">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="docs/stars-dark.svg" />
+   <source media="(prefers-color-scheme: light)" srcset="docs/stars-light.svg" />
+   <img alt="Star History Chart" src="docs/stars-light.svg" />
+ </picture>
+</a>
+
 ## License
 
 **AGPL-3.0-or-later** — the same license as Strudel, because this is a port of it. If you distribute a game together with this plugin, that game falls under the same terms. Read [NOTICE.md](NOTICE.md) before shipping.
