@@ -115,3 +115,30 @@ func test_отсчёт_цикла_по_звуковым_часам() -> void:
 		e.render_block(n)
 		done += n
 	eq_num(e.current_cycle(), 0.5, 0.001, "за секунду прошло полцикла")
+
+
+func test_общий_генератор_игры_не_трогается() -> void:
+	# 🔴 РЕГРЕССИЯ. Шум и стая пил тянули числа из `randf()`, а он один на всю
+	# игру: той же чередой игра раскладывает свои вещи. Каждая сыгранная нота
+	# сдвигала ход игры — гейт обхода в Osmo падал наложениями, и звук был
+	# виноват. Проверка: череда общего генератора после сведения звука должна
+	# остаться ТОЙ ЖЕ.
+	seed(20260904)
+	var want: Array = []
+	for i in 8:
+		want.append(randi())
+
+	seed(20260904)
+	var e := StrudelEngine.new()
+	e.setup(48000.0)
+	var run := StrudelRuntime.run('s("white pink brown supersaw").gain(0.5)')
+	check(run.get("ok", false), "паттерн с шумом собрался")
+	e.set_pattern(run["pattern"])
+	for b in 8:
+		e.render_block(2048)
+
+	var got: Array = []
+	for i in 8:
+		got.append(randi())
+	for i in want.size():
+		eq(str(got[i]), str(want[i]), "общий генератор на месте, число %d" % i)
