@@ -7,7 +7,7 @@ giantSteps, caverave, bassFuge, amensister, flatrave и прочие. Они и
 
     python tools/judge/extract_tunes.py
 
-Кладёт каждый трек отдельным файлом в examples/tunes/ и список — в
+Кладёт каждый трек отдельным файлом в examples/05_community_tunes/tunes/ и список — в
 tools/judge/tunes.json.
 """
 
@@ -73,7 +73,7 @@ def main() -> int:
         path.write_text(header + body.strip() + "\n", encoding="utf-8")
         index.append({
             "id": name,
-            "file": f"examples/tunes/{name}.js",
+            "file": f"examples/05_community_tunes/tunes/{name}.js",
             "lines": len(body.strip().splitlines()),
             "chars": len(body.strip()),
         })

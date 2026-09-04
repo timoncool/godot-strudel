@@ -1,193 +1,193 @@
 [
  {
   "id": "swimming",
-  "file": "examples/tunes/swimming.js",
+  "file": "examples/05_community_tunes/tunes/swimming.js",
   "lines": 61,
   "chars": 3220
  },
  {
   "id": "giantSteps",
-  "file": "examples/tunes/giantSteps.js",
+  "file": "examples/05_community_tunes/tunes/giantSteps.js",
   "lines": 30,
   "chars": 749
  },
  {
   "id": "zeldasRescue",
-  "file": "examples/tunes/zeldasRescue.js",
+  "file": "examples/05_community_tunes/tunes/zeldasRescue.js",
   "lines": 23,
   "chars": 889
  },
  {
   "id": "caverave",
-  "file": "examples/tunes/caverave.js",
+  "file": "examples/05_community_tunes/tunes/caverave.js",
   "lines": 43,
   "chars": 1237
  },
  {
   "id": "sampleDrums",
-  "file": "examples/tunes/sampleDrums.js",
+  "file": "examples/05_community_tunes/tunes/sampleDrums.js",
   "lines": 12,
   "chars": 286
  },
  {
   "id": "barryHarris",
-  "file": "examples/tunes/barryHarris.js",
+  "file": "examples/05_community_tunes/tunes/barryHarris.js",
   "lines": 8,
   "chars": 183
  },
  {
   "id": "blippyRhodes",
-  "file": "examples/tunes/blippyRhodes.js",
+  "file": "examples/05_community_tunes/tunes/blippyRhodes.js",
   "lines": 42,
   "chars": 1134
  },
  {
   "id": "wavyKalimba",
-  "file": "examples/tunes/wavyKalimba.js",
+  "file": "examples/05_community_tunes/tunes/wavyKalimba.js",
   "lines": 31,
   "chars": 658
  },
  {
   "id": "festivalOfFingers",
-  "file": "examples/tunes/festivalOfFingers.js",
+  "file": "examples/05_community_tunes/tunes/festivalOfFingers.js",
   "lines": 19,
   "chars": 633
  },
  {
   "id": "undergroundPlumber",
-  "file": "examples/tunes/undergroundPlumber.js",
+  "file": "examples/05_community_tunes/tunes/undergroundPlumber.js",
   "lines": 27,
   "chars": 750
  },
  {
   "id": "goodTimes",
-  "file": "examples/tunes/goodTimes.js",
+  "file": "examples/05_community_tunes/tunes/goodTimes.js",
   "lines": 21,
   "chars": 482
  },
  {
   "id": "echoPiano",
-  "file": "examples/tunes/echoPiano.js",
+  "file": "examples/05_community_tunes/tunes/echoPiano.js",
   "lines": 12,
   "chars": 311
  },
  {
   "id": "sml1",
-  "file": "examples/tunes/sml1.js",
+  "file": "examples/05_community_tunes/tunes/sml1.js",
   "lines": 34,
   "chars": 979
  },
  {
   "id": "randomBells",
-  "file": "examples/tunes/randomBells.js",
+  "file": "examples/05_community_tunes/tunes/randomBells.js",
   "lines": 22,
   "chars": 634
  },
  {
   "id": "waa2",
-  "file": "examples/tunes/waa2.js",
+  "file": "examples/05_community_tunes/tunes/waa2.js",
   "lines": 17,
   "chars": 410
  },
  {
   "id": "festivalOfFingers3",
-  "file": "examples/tunes/festivalOfFingers3.js",
+  "file": "examples/05_community_tunes/tunes/festivalOfFingers3.js",
   "lines": 23,
   "chars": 617
  },
  {
   "id": "meltingsubmarine",
-  "file": "examples/tunes/meltingsubmarine.js",
+  "file": "examples/05_community_tunes/tunes/meltingsubmarine.js",
   "lines": 40,
   "chars": 1506
  },
  {
   "id": "outroMusic",
-  "file": "examples/tunes/outroMusic.js",
+  "file": "examples/05_community_tunes/tunes/outroMusic.js",
   "lines": 30,
   "chars": 1023
  },
  {
   "id": "bassFuge",
-  "file": "examples/tunes/bassFuge.js",
+  "file": "examples/05_community_tunes/tunes/bassFuge.js",
   "lines": 29,
   "chars": 1004
  },
  {
   "id": "chop",
-  "file": "examples/tunes/chop.js",
+  "file": "examples/05_community_tunes/tunes/chop.js",
   "lines": 13,
   "chars": 275
  },
  {
   "id": "delay",
-  "file": "examples/tunes/delay.js",
+  "file": "examples/05_community_tunes/tunes/delay.js",
   "lines": 10,
   "chars": 246
  },
  {
   "id": "orbit",
-  "file": "examples/tunes/orbit.js",
+  "file": "examples/05_community_tunes/tunes/orbit.js",
   "lines": 15,
   "chars": 312
  },
  {
   "id": "belldub",
-  "file": "examples/tunes/belldub.js",
+  "file": "examples/05_community_tunes/tunes/belldub.js",
   "lines": 36,
   "chars": 1335
  },
  {
   "id": "dinofunk",
-  "file": "examples/tunes/dinofunk.js",
+  "file": "examples/05_community_tunes/tunes/dinofunk.js",
   "lines": 28,
   "chars": 789
  },
  {
   "id": "sampleDemo",
-  "file": "examples/tunes/sampleDemo.js",
+  "file": "examples/05_community_tunes/tunes/sampleDemo.js",
   "lines": 17,
   "chars": 551
  },
  {
   "id": "holyflute",
-  "file": "examples/tunes/holyflute.js",
+  "file": "examples/05_community_tunes/tunes/holyflute.js",
   "lines": 13,
   "chars": 392
  },
  {
   "id": "flatrave",
-  "file": "examples/tunes/flatrave.js",
+  "file": "examples/05_community_tunes/tunes/flatrave.js",
   "lines": 25,
   "chars": 841
  },
  {
   "id": "amensister",
-  "file": "examples/tunes/amensister.js",
+  "file": "examples/05_community_tunes/tunes/amensister.js",
   "lines": 37,
   "chars": 974
  },
  {
   "id": "juxUndTollerei",
-  "file": "examples/tunes/juxUndTollerei.js",
+  "file": "examples/05_community_tunes/tunes/juxUndTollerei.js",
   "lines": 14,
   "chars": 429
  },
  {
   "id": "csoundDemo",
-  "file": "examples/tunes/csoundDemo.js",
+  "file": "examples/05_community_tunes/tunes/csoundDemo.js",
   "lines": 35,
   "chars": 814
  },
  {
   "id": "loungeSponge",
-  "file": "examples/tunes/loungeSponge.js",
+  "file": "examples/05_community_tunes/tunes/loungeSponge.js",
   "lines": 19,
   "chars": 613
  },
  {
   "id": "arpoon",
-  "file": "examples/tunes/arpoon.js",
+  "file": "examples/05_community_tunes/tunes/arpoon.js",
   "lines": 26,
   "chars": 773
  }

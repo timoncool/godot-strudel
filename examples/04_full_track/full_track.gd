@@ -6,7 +6,7 @@ extends Node
 ## шестнадцати секций, аккордовый круг, свинг, вероятностное прореживание.
 ## Он вставлен сюда БЕЗ ЕДИНОЙ ПРАВКИ — тот же текст, что в браузере.
 
-const TRACK := "res://examples/full_track/kuvshinka.js"
+const TRACK := "res://examples/04_full_track/track/kuvshinka.js"
 
 var music: StrudelPlayer
 

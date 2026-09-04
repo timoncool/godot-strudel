@@ -2,14 +2,14 @@ extends Node
 
 ## Пример 7 — ЧУЖИЕ ТРЕКИ. Коллекция Strudel играет в Godot как есть.
 ##
-## В `examples/tunes/` лежат тридцать два куска из `website/src/repl/tunes.mjs`
+## В `examples/05_community_tunes/tunes/` лежат тридцать два куска из `website/src/repl/tunes.mjs`
 ## — партии живых авторов, взятые БЕЗ ЕДИНОЙ ПРАВКИ. Это и есть настоящая
 ## приёмка порта: не один подогнанный трек, а чужой код.
 ##
 ## Пробел — следующий трек, стрелки — соседний, Esc — выход.
 ## Можно и с ключом запуска: `-- --tune=giantSteps`.
 
-const TUNES_DIR := "res://examples/tunes"
+const TUNES_DIR := "res://examples/05_community_tunes/tunes"
 
 var music: StrudelPlayer
 var _names: PackedStringArray = PackedStringArray()

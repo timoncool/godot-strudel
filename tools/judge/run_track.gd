@@ -8,7 +8,7 @@ extends SceneTree
 ## Файл трека берётся КАК ЕСТЬ — тот же самый, что скормлен Булке.
 ## Выгружает события всех 64 циклов для посекундной сверки.
 
-const TRACK := "res://examples/full_track/kuvshinka.js"
+const TRACK := "res://examples/04_full_track/track/kuvshinka.js"
 const OUT := "res://tools/judge/golden/godot_track.json"
 const CYCLES := 64
 

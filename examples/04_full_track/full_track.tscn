@@ -1,6 +1,6 @@
 [gd_scene load_steps=2 format=3]
 
-[ext_resource type="Script" path="res://examples/06_full_track/full_track.gd" id="1"]
+[ext_resource type="Script" path="res://examples/04_full_track/full_track.gd" id="1"]
 
 [node name="FullTrack" type="Node"]
 script = ExtResource("1")

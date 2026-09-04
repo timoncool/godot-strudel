@@ -4,10 +4,10 @@ extends StrudelTestBase
 ## Сэмплер: чужая папка, карты формата Strudel, многосэмплированный инструмент.
 ##
 ## Пак не лежит в репозитории готовым — он синтезируется скриптом
-## examples/04_own_samples/make_pack.py, чтобы ни одного чужого звука в
+## examples/02_own_samples/make_pack.py, чтобы ни одного чужого звука в
 ## поставке не было и чтобы проверка не зависела от сети.
 
-const PACK_DIR := "res://examples/04_own_samples"
+const PACK_DIR := "res://examples/02_own_samples"
 
 
 func _bank() -> StrudelSampleBank:

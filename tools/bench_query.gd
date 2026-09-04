@@ -5,7 +5,7 @@ extends SceneTree
 ##
 ##   godot --headless --path <проект> --script res://tools/bench_query.gd
 
-const TRACK := "res://examples/full_track/kuvshinka.js"
+const TRACK := "res://examples/04_full_track/track/kuvshinka.js"
 
 
 func _init() -> void:

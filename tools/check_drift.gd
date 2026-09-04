@@ -9,7 +9,7 @@ extends SceneTree
 ## Разница между ними и есть уход. Мерить его надо на КОНЦЕ длинной формы:
 ## если время считается накоплением, к шестнадцатой секции набежит слышимое.
 
-const TRACK := "res://examples/full_track/kuvshinka.js"
+const TRACK := "res://examples/04_full_track/track/kuvshinka.js"
 const RATE := 48000.0
 
 

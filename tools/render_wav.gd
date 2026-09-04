@@ -5,7 +5,7 @@ extends SceneTree
 ##
 ##   godot --headless --path <проект> --script res://tools/render_wav.gd -- \
 ##         --code='s("bd sd*2, hh*8")' --out=D:/out.wav --seconds=8
-##   godot ... -- --file=res://examples/full_track/kuvshinka.js --out=... --seconds=30
+##   godot ... -- --file=res://examples/04_full_track/track/kuvshinka.js --out=... --seconds=30
 ##
 ## Зачем: доказать, что звук ЕСТЬ, не имея устройства вывода (в CI его нет),
 ## и получить файл, который сверяется по спектру и уровню с записью из Булки.

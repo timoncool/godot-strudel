@@ -40,7 +40,7 @@ bash   tools/judge/check_effects.sh      # звук, каждый узел це�
 | целый трек, 64 цикла | **2449 событий из 2449**, те же времена и те же значения |
 | охват словаря Strudel | **213 функций из 213, 499 параметров из 499** |
 
-Треки сообщества (`examples/tunes/`) взяты из `website/src/repl/tunes.mjs` КАК
+Треки сообщества (`examples/05_community_tunes/tunes/`) взяты из `website/src/repl/tunes.mjs` КАК
 ЕСТЬ, без единой правки: giantSteps, caverave, bassFuge, amensister, flatrave и
 остальные двадцать семь. Это и есть главная приёмка — не один подогнанный
 трек, а чужой код, написанный людьми.

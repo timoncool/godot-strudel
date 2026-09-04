@@ -11,7 +11,7 @@
 
 Приёмка — не один подогнанный трек, а вся коллекция Strudel:
 `website/src/repl/tunes.mjs`, тридцать два куска живых авторов. Они лежат в
-`examples/tunes/` КАК ЕСТЬ, без единой правки, и сверяются с живой Булкой по
+`examples/05_community_tunes/tunes/` КАК ЕСТЬ, без единой правки, и сверяются с живой Булкой по
 времени и значению каждого события; числа сравниваются битами.
 
 ```
@@ -27,7 +27,7 @@ loungeSponge, arpoon — то есть весь набор приёмов: ла�
 
 **И целый трек из Strudel играет от начала до конца.**
 
-Файл `examples/full_track/kuvshinka.js` — стек из десяти партий, форма из
+Файл `examples/04_full_track/track/kuvshinka.js` — стек из десяти партий, форма из
 шестнадцати секций, аккордовый круг из восьми аккордов, свинг `23/800`,
 вероятностное прореживание, эффекты. Вставлен **без единой правки** — тот же
 текст, что в браузере.
@@ -404,7 +404,7 @@ godot --headless --path . --script res://tools/check_soundfont.gd -- --sf2=<фа
 
 # вывод в файл без звуковой карты
 godot --headless --path . --script res://tools/render_wav.gd -- \
-      --file=res://examples/full_track/kuvshinka.js --out=<файл> --seconds=60
+      --file=res://examples/04_full_track/track/kuvshinka.js --out=<файл> --seconds=60
 
 # экспорт и ЗАПУСК собранного
 godot --headless --path . --export-release "Windows Desktop" build/StrudelDemo.exe

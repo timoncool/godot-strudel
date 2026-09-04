@@ -7,7 +7,7 @@ extends SceneTree
 ##
 ## Треки взяты из коллекции Strudel (`website/src/repl/tunes.mjs`) КАК ЕСТЬ,
 ## без единой правки: giantSteps, caverave, bassFuge, amensister, flatrave и
-## далее. Каждый читается из examples/tunes/, исполняется и выгружается для
+## далее. Каждый читается из examples/05_community_tunes/tunes/, исполняется и выгружается для
 ## сверки с эталоном, снятым с живой Булки.
 
 const LIST := "res://tools/judge/tunes.json"

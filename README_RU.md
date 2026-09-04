@@ -124,9 +124,10 @@ music.set_pattern(beat)
 | Пример | Что показывает |
 |---|---|
 | `examples/01_minimal_beat` | Случай в три строки |
-| `examples/05_game_reacts` | Картинка игры, ведомая событиями паттерна |
-| `examples/06_full_track` | Целый трек из шестнадцати секций, перенесённый без правок |
-| `examples/07_community_tunes` | Тридцать два трека сообщества из коллекции Strudel — переключаются пробелом |
+| `examples/02_own_samples` | Своя папка сэмплов в формате карт Strudel |
+| `examples/03_game_reacts` | Картинка игры, ведомая событиями паттерна |
+| `examples/04_full_track` | Целый трек из шестнадцати секций, перенесённый без правок |
+| `examples/05_community_tunes` | Тридцать два трека сообщества из коллекции Strudel — переключаются пробелом |
 
 ## Другие проекты [@timoncool](https://github.com/timoncool)
 

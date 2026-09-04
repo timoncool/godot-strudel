@@ -22,7 +22,7 @@ jobs:
           godot --version
 
       - name: Собрать пак сэмплов для проверок
-        run: python3 examples/04_own_samples/make_pack.py
+        run: python3 examples/02_own_samples/make_pack.py
 
       - name: Импорт
         run: godot --headless --path . --import

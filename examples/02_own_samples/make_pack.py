@@ -3,7 +3,7 @@
 Никаких чужих файлов в репозитории: звуки синтезируются здесь же, чтобы
 пример работал сразу после клонирования и ничего не тянул из сети.
 
-    python examples/04_own_samples/make_pack.py
+    python examples/02_own_samples/make_pack.py
 """
 
 import json
