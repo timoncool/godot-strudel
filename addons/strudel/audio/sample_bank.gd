@@ -198,6 +198,55 @@ func resolve(name: String, index: int, bank_name: String, midi_note: float) -> D
 	return {"data": pcm, "rate": float(_rates.get(path, 48000.0)), "speed": 1.0}
 
 
+## ── ПРОГРЕВ ────────────────────────────────────────────────────────────────
+##
+## 🔴 Разбор файла идёт при ПЕРВОЙ ноте нужной высоты. У многосэмплированного
+## инструмента таких высот десятки, и каждая обходится в сотню миллисекунд —
+## на слух игра замирает в паузе и ждёт следующего звука. Считать заранее
+## нечего: сколько бы ни было запаса по скорости счёта, чтение файла всё равно
+## встанет посреди фразы.
+##
+## Поэтому банк разбирает свои файлы наперёд, в отдельном потоке: музыка уже
+## играет, а сэмплы доезжают следом. К моменту, когда фраза дойдёт до верхнего
+## регистра, он давно разобран.
+
+var _prime_thread: Thread
+var _prime_stop := false
+var _mutex := Mutex.new()
+
+
+func prime_async() -> void:
+	## Разобрать все файлы банка наперёд, не задерживая старт.
+	if _prime_thread != null:
+		return
+	_prime_stop = false
+	_prime_thread = Thread.new()
+	_prime_thread.start(_prime_loop)
+
+
+func prime_stop() -> void:
+	if _prime_thread == null:
+		return
+	_prime_stop = true
+	_prime_thread.wait_to_finish()
+	_prime_thread = null
+
+
+func _prime_loop() -> void:
+	for key in entries.keys():
+		if _prime_stop:
+			return
+		var entry: Dictionary = entries[key]
+		for path in (entry.get("pitched", {}) as Dictionary).values():
+			if _prime_stop:
+				return
+			_pcm(String(path))
+		for path in (entry.get("files", []) as Array):
+			if _prime_stop:
+				return
+			_pcm(String(path))
+
+
 func pcm_of(path: String) -> PackedFloat32Array:
 	## Отсчёты файла по пути. Открытая дверь для проверок и для игры,
 	## которой понадобился сэмпл сам по себе.
@@ -213,8 +262,14 @@ func rate_of(path: String) -> float:
 
 
 func _pcm(path: String) -> PackedFloat32Array:
-	if _cache.has(path):
-		return _cache[path]
+	# Кэш общий для потока прогрева и для счёта звука — читаем и пишем под
+	# замком, иначе словарь правится из двух потоков разом.
+	_mutex.lock()
+	var ready: bool = _cache.has(path)
+	var hit: PackedFloat32Array = _cache[path] if ready else PackedFloat32Array()
+	_mutex.unlock()
+	if ready:
+		return hit
 	var ext := path.get_extension().to_lower()
 	if ext == "wav":
 		# 🔴 WAV РАЗБИРАЕТСЯ САМИМ ПЛАГИНОМ, а не движком.
@@ -227,19 +282,25 @@ func _pcm(path: String) -> PackedFloat32Array:
 		# тише пика на полсотни децибел, уходит в ступеньку квантования.
 		# Замерено сверкой с Булкой: у ноты пропадала основная частота —
 		# 22 дБ разницы там, где остальной спектр сходился до децибела.
+		# Сначала пробует движок: он разбирает тот же файл в тринадцать раз
+		# быстрее нашего цикла. Свой разбор остаётся запасным.
+		var wav := AudioStreamWAV.load_from_file(path)
+		if wav != null:
+			var out := _decode_wav(wav)
+			if not out.is_empty():
+				_mutex.lock()
+				_cache[path] = out
+				_rates[path] = float(wav.mix_rate)
+				_mutex.unlock()
+				return out
 		var mine := _read_wav(path)
 		if not mine.is_empty():
+			_mutex.lock()
 			_cache[path] = mine["data"]
 			_rates[path] = float(mine["rate"])
-			return _cache[path]
-		# Сжатые виды (IMA-ADPCM, QOA) разбирает движок.
-		var wav := AudioStreamWAV.load_from_file(path)
-		if wav == null:
-			return _no_pcm(path, "не прочитал")
-		var out := _decode_wav(wav)
-		_cache[path] = out
-		_rates[path] = float(wav.mix_rate)
-		return out
+			_mutex.unlock()
+			return mine["data"]
+		return _no_pcm(path, "не прочитал")
 
 	if not AUDIO_EXTS.has(ext):
 		return _no_pcm(path, "не знаю такого расширения")

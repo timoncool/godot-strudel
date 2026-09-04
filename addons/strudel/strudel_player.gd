@@ -157,12 +157,18 @@ func play(new_code: String = "") -> bool:
 	if not _player.playing:
 		_player.play()
 	_playing = true
+	# Сэмплы разбираются наперёд, чтобы первая нота каждой высоты не вставала
+	# посреди фразы.
+	if _engine.bank != null and _engine.bank.has_method("prime_async"):
+		_engine.bank.prime_async()
 	return true
 
 
 func stop() -> void:
 	## Останавливает музыку и глушит голоса.
 	_playing = false
+	if _engine.bank != null and _engine.bank.has_method("prime_stop"):
+		_engine.bank.prime_stop()
 	if _player != null:
 		_player.stop()
 	if _engine != null:
