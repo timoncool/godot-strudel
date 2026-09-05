@@ -312,7 +312,29 @@ static func transpose_by(note: String, interval_number: int, semitones: int) -> 
 static func transpose(pat: StrudelPattern, amount: Variant) -> StrudelPattern:
 	## Сдвиг по полутонам. Ноты-имена остаются именами, числа — числами.
 	return pat._patternify([amount], func(vals: Array) -> StrudelPattern:
-		var semis := int(StrudelPattern._num(vals[0]))
+		# 🔴 ИНТЕРВАЛ БЫВАЕТ СТРОКОЙ, И ЭТО НЕ ЧИСЛО ПОЛУТОНОВ.
+		#
+		# `transpose("4P")` — чистая кварта, `"3m"` — малая терция, `"-2M"` —
+		# большая секунда вниз. Раньше строка шла через `_num`, тот принимал
+		# её за НОТУ и отдавал номер по MIDI: `transpose("4P")` давало ноту
+		# `Ebbbbbb…` с гирляндой бемолей. В оригинале (`tonal.mjs:137`)
+		# строка идёт в `Note.transpose` целиком, и от неё берутся ОБА числа —
+		# ступень и полутоны, — иначе увеличенная кварта и уменьшённая квинта
+		# (обе по шесть полутонов) дали бы одно и то же имя.
+		var raw: Variant = vals[0]
+		var as_text := String(raw) if (raw is String or raw is StringName) else ""
+		var by_interval := as_text != "" and not as_text.is_valid_float() 			and not StrudelUtil.is_note(as_text)
+		var step_number := 0
+		var semis := 0
+		if by_interval:
+			var parts := interval_parts(as_text)
+			step_number = int(parts[0])
+			semis = int(parts[1])
+			if as_text.begins_with("-"):
+				step_number = -step_number
+				semis = -absi(semis)
+		else:
+			semis = int(StrudelPattern._num(raw))
 		return pat.fmap(func(value):
 			var note: Variant = value
 			if value is Dictionary and (value as Dictionary).has("note"):
@@ -321,7 +343,7 @@ static func transpose(pat: StrudelPattern, amount: Variant) -> StrudelPattern:
 			if note is String or note is StringName:
 				if not StrudelUtil.is_note(String(note)):
 					return value
-				shifted = transpose_note(String(note), semis)
+				shifted = transpose_by(String(note), step_number, semis) 					if by_interval else transpose_note(String(note), semis)
 			else:
 				shifted = StrudelPattern._num(note) + float(semis)
 			if value is Dictionary:

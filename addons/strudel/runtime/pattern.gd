@@ -579,11 +579,28 @@ static func _retime(timed: Array) -> Array:
 	## Итог сводится к правилу «у куска есть свои шаги — берём их, нет —
 	## берём его длительность». Повторяем ровно это: переписать «как
 	## задумано» значит разойтись с Булкой на каждом пошаговом действии.
+	# 🔴 КУСКУ БЕЗ СВОИХ ШАГОВ ДОСТАЁТСЯ СРЕДНЕЕ ПО ТЕМ, У КОГО ОНИ ЕСТЬ,
+	# а не его собственная длительность. В оригинале `dur.mulmaybe(undefined)`
+	# даёт «не задано» (`fraction.mjs:68`), и разбирается это в `stepcat`
+	# (`pattern.mjs:3125`): такие куски получают среднее, а если шагов нет ни
+	# у кого — все куски равны. Замерено на `sound("bd sd cp mt").take("2 ~")`:
+	# выходило 2.5 шага и «bd» на [0,2/5) вместо четырёх шагов и первой
+	# половины круга.
+	var known: Array = []
+	for pair in timed:
+		var p2: StrudelPattern = pair[1]
+		if p2.steps != null:
+			known.append(p2.steps)
+	var fill := StrudelFraction.new(1)
+	if not known.is_empty():
+		var sum := StrudelFraction.new(0)
+		for s in known:
+			sum = sum.add(s)
+		fill = sum.div(StrudelFraction.new(known.size()))
 	var out: Array = []
 	for pair in timed:
-		var dur: StrudelFraction = pair[0]
 		var pat: StrudelPattern = pair[1]
-		out.append([pat.steps if pat.steps != null else dur, pat])
+		out.append([pat.steps if pat.steps != null else fill, pat])
 	return out
 
 
@@ -955,10 +972,17 @@ static func polymeter(pats: Array, steps_per_cycle: Variant = null) -> StrudelPa
 
 
 static func _lcm_steps(list: Array) -> StrudelFraction:
+	## 🔴 «НЕ ЗАДАНО» СНАЧАЛА ВЫБРАСЫВАЕТСЯ, А НЕ ОБНУЛЯЕТ ВЕСЬ СПИСОК.
+	##
+	## В оригинале (`fraction.mjs:117`) `lcm` начинает с `removeUndefineds`,
+	## и только пустой остаток даёт «не задано». Здесь возврат null из-за
+	## ОДНОГО безшагового слоя терял число шагов у всей стопки, а дальше
+	## `pace`, `polymeter` и `stepcat` молча вели себя иначе, чем в Булке:
+	## замерено, `stack(s("bd sd"), n(sine)).pace(4)` не ускорялся вовсе.
 	var acc: StrudelFraction = null
 	for s in list:
 		if s == null:
-			return null
+			continue
 		acc = s if acc == null else acc.lcm(s)
 	return acc
 
