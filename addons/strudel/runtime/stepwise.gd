@@ -56,8 +56,15 @@ static func shrinklist(pat: StrudelPattern, amount: Variant) -> Array:
 		value = amount[0]
 		times = amount[1]
 	var a := StrudelFraction.of(value)
-	var count := int(StrudelPattern._num(times))
-	if count == 0 or a.is_zero():
+	# 🔴 ЧИСЛО ПРОХОДОВ ОКРУГЛЯЕТСЯ ВВЕРХ, А НЕ ОБРЕЗАЕТСЯ. В оригинале
+	# (`pattern.mjs:3338`) счётчик сравнивается с ДРОБЬЮ: `for (let i = 0;
+	# i < times; ++i)`, и при 2.5 шагах проходов выходит три, а не два.
+	var count := int(ceil(StrudelPattern._num(times) - 1e-9))
+	# 🔴 НУЛЕВОЙ ДОВОД НЕ ОБРЫВАЕТ РЯД. В оригинале проверка написана как
+	# `amountv === 0`, где слева ОБЪЕКТ-дробь, — она не срабатывает никогда,
+	# и при нуле выходит столько копий целого паттерна, сколько шагов.
+	# Повторяем это: обрывает ряд только `times == 0`.
+	if count == 0:
 		return [pat]
 
 	var ranges: Array = []
@@ -92,7 +99,9 @@ static func growlist(pat: StrudelPattern, amount: Variant) -> Array:
 
 static func shrink(pat: StrudelPattern, amount: Variant) -> StrudelPattern:
 	## Паттерн, укорачивающийся с каждым повтором.
-	return _step_patternify(pat, amount, func(p: StrudelPattern, i: StrudelFraction) -> StrudelPattern:
+	# Довод может прийти ПАРОЙ («по стольку шагов, столько раз»), поэтому тип
+	# здесь свободный: `shrinklist` разбирает обе формы сам.
+	return _step_patternify(pat, amount, func(p: StrudelPattern, i: Variant) -> StrudelPattern:
 		if p.steps == null:
 			return StrudelPattern.nothing()
 		return _cat_list(shrinklist(p, i))
@@ -101,10 +110,17 @@ static func shrink(pat: StrudelPattern, amount: Variant) -> StrudelPattern:
 
 static func grow(pat: StrudelPattern, amount: Variant) -> StrudelPattern:
 	## Паттерн, дорастающий до целого.
-	return _step_patternify(pat, amount, func(p: StrudelPattern, i: StrudelFraction) -> StrudelPattern:
+	return _step_patternify(pat, amount, func(p: StrudelPattern, i: Variant) -> StrudelPattern:
 		if p.steps == null:
 			return StrudelPattern.nothing()
-		var list := shrinklist(p, StrudelFraction.new(0).sub(i))
+		# У пары отрицается только ВЕЛИЧИНА, число проходов остаётся.
+		var neg: Variant
+		if i is Array:
+			var pair: Array = i
+			neg = [StrudelFraction.new(0).sub(StrudelFraction.of(pair[0])), pair[1]]
+		else:
+			neg = StrudelFraction.new(0).sub(StrudelFraction.of(i))
+		var list := shrinklist(p, neg)
 		list.reverse()
 		return _cat_list(list)
 	)
@@ -157,9 +173,16 @@ static func _cat_list(list: Array) -> StrudelPattern:
 
 static func _step_patternify(pat: StrudelPattern, amount: Variant, fn: Callable) -> StrudelPattern:
 	## Как `register` с `stepJoin`: довод — паттерн, склейка ПОШАГОВАЯ.
+	# 🔴 ПАРУ ДОВОДОВ НЕЛЬЗЯ ПРИВОДИТЬ К ДРОБИ. `shrink("1:3")` в
+	# mini-нотации даёт СПИСОК [1, 3] — «по стольку шагов, столько раз», — а
+	# `StrudelFraction.of` превращал его в одно число, и вторая половина
+	# довода пропадала: замерено, `shrink("1:3")` звучал как `shrink(1)`.
+	# Пропускаем список как есть, приводим только одиночные числа.
+	var as_arg := func(v: Variant) -> Variant:
+		return v if v is Array else StrudelFraction.of(v)
 	var arg := StrudelPattern.reify(amount)
 	if arg._has_pure:
-		return fn.call(pat, StrudelFraction.of(arg._pure_value))
+		return fn.call(pat, as_arg.call(arg._pure_value))
 	return arg.fmap(func(v) -> StrudelPattern:
-		return fn.call(pat, StrudelFraction.of(v))
+		return fn.call(pat, as_arg.call(v))
 	).step_join()
