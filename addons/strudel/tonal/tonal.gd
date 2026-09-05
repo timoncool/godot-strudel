@@ -598,15 +598,24 @@ static var _last_voicing: Array = [null]
 
 static func arp(pat: StrudelPattern, indices: Variant) -> StrudelPattern:
 	## Разбивает созвучие на голоса по номерам.
+	##
+	## 🔴 ЧЕРЕЗ `arp_with`, А НЕ СВОИМ СБОРОМ. Раньше здесь был собственный
+	## «столбик» и разворот, и он отдавал ЗНАЧЕНИЕ события вместо самого
+	## события — вместе с ним пропадало окружение, в котором лежит метка
+	## лада. Замерено: `n("[0,2,4]").scale("C:major").arp("0 1 2")
+	## .scaleTranspose(1)` давало НОЛЬ событий, потому что `scaleTranspose`
+	## не находил лада и срывал запрос. `arp_with` возвращает событие целиком
+	## и подмешивает его окружение обратно — в оригинале `arp` построен
+	## именно на нём.
 	var index_pat := StrudelPattern.reify(indices)
-	return _collect(pat).fmap(func(haps: Array) -> StrudelPattern:
+	return arp_with(pat, func(haps: Array) -> StrudelPattern:
 		return index_pat.fmap(func(i) -> Variant:
 			if haps.is_empty():
 				return null
 			var k := StrudelUtil.mod_i(int(StrudelPattern._num(i)), haps.size())
-			return (haps[k] as StrudelHap).value
+			return haps[k]
 		)
-	).inner_join()
+	)
 
 
 static func _collect(pat: StrudelPattern) -> StrudelPattern:
