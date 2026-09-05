@@ -8,8 +8,11 @@ extends StrudelTestBase
 ## поставке не было и чтобы проверка не зависела от сети.
 
 const PACK_DIR := "res://examples/02_own_samples"
-## Второй пак — рояль примера «Пока горит окно»: карта нот в отдельной папке.
-const PIANO_DIR := "res://examples/06_okno"
+## Второй пак для проверки накопления. 🔴 БЕРЁТСЯ ТОЛЬКО ТО, ЧТО ЛЕЖИТ В
+## РЕПОЗИТОРИИ: сперва здесь стояла папка примера с роялем, её нет в поставке —
+## на своей машине тест зеленел, а на чистой сборке падал «рояль загрузился:
+## 0 имён». Эта папка — часть пака 02, её собирает `make_pack.py`.
+const SECOND_DIR := "res://examples/02_own_samples/pack/bell"
 
 
 func _bank() -> StrudelSampleBank:
@@ -29,18 +32,18 @@ func test_банк_копит_паки_а_не_подменяет() -> void:
 	# 🔴 ДВА ПАКА ЖИВУТ В ОДНОМ БАНКЕ. В Strudel реестр звуков накопительный
 	# (`soundMap.setKey`, `superdough/superdough.mjs:61`), и `samples()` зовут
 	# по разу на пак. Здесь `load_folder` чистил банк, и второй вызов
-	# ВЫБРАСЫВАЛ первый: рояль (2 имени) плюс барабаны (4) давали 4 вместо 6,
-	# и трек с бочкой и роялем звучал наполовину.
+	# ВЫБРАСЫВАЛ первый: три имени плюс четыре давали 4 вместо 7, и трек, где
+	# ударные из одного пака, а инструмент из другого, звучал наполовину.
 	var bank := StrudelSampleBank.new()
-	bank.load_folder(ProjectSettings.globalize_path(PIANO_DIR))
-	var after_piano := bank.count()
-	check(bank.entries.has("piano"), "рояль загрузился: %d имён" % after_piano)
+	bank.load_folder(ProjectSettings.globalize_path(SECOND_DIR))
+	var after_first := bank.count()
+	check(bank.entries.has("c3"), "первый пак загрузился: %d имён" % after_first)
 	bank.load_folder(ProjectSettings.globalize_path(PACK_DIR))
-	check(bank.entries.has("piano") and bank.entries.has("bd"),
+	check(bank.entries.has("c3") and bank.entries.has("bd"),
 		"после второго пака на месте оба: имён %d (было %d)"
-		% [bank.count(), after_piano])
-	check(bank.count() > after_piano,
-		"банк вырос, а не подменился: %d > %d" % [bank.count(), after_piano])
+		% [bank.count(), after_first])
+	check(bank.count() > after_first,
+		"банк вырос, а не подменился: %d > %d" % [bank.count(), after_first])
 
 
 func test_забыть_паки_можно_явно() -> void:
