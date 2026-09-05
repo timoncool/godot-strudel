@@ -30,6 +30,11 @@ var source: Source = Source.SINE
 var sample: PackedFloat32Array = PackedFloat32Array()
 var sample_rate := 48000.0
 var sample_loop := false
+## Откуда и докуда играть сэмпл — ДОЛИ буфера, как `begin` и `end` в Strudel.
+## Ими живут `chop`, `striate`, `slice` и `splice`: они режут не звук, а
+## событие, и без этих двух чисел все куски играют файл целиком с начала.
+var sample_begin := 0.0
+var sample_end := 1.0
 
 var frequency := 440.0
 var speed := 1.0
@@ -143,6 +148,8 @@ var _vib_phase := 0.0
 var _super_l := 0.0
 var _super_r := 0.0
 var _sample_pos := 0.0
+## Докуда играть в отсчётах — считается в `start()` из `sample_end`.
+var _sample_stop := 0.0
 var _rate := 48000.0
 ## СВОЙ генератор случайного — на весь плагин один.
 ##
@@ -180,7 +187,11 @@ func start(mix_rate: float) -> void:
 	_rate = mix_rate
 	_pos = 0
 	_phase = 0.0
-	_sample_pos = 0.0
+	# Начало и конец куска считаются ОДИН раз на ноте: в горячем цикле
+	# умножать на размер буфера незачем.
+	var last := maxf(float(sample.size() - 1), 0.0)
+	_sample_pos = clampf(sample_begin, 0.0, 1.0) * last
+	_sample_stop = clampf(sample_end, 0.0, 1.0) * last
 	_brown = 0.0
 	_pink = PackedFloat32Array()
 	_pink.resize(7)
@@ -297,7 +308,8 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 	var post := postgain
 	var freq_step := frequency * speed / rate
 	var sample_step := speed * (sample_rate / rate)
-	var sample_last := sample.size() - 1
+	# Конец куска, а не конец файла: `end` режет по доле буфера.
+	var sample_last := mini(int(_sample_stop), sample.size() - 1)
 	var wave_lo := StrudelWavetable.table(_wave_kind, _wave_lo) if _wave_kind >= 0 \
 		else PackedFloat32Array()
 	var wave_hi := StrudelWavetable.table(_wave_kind, _wave_hi) if _wave_kind >= 0 \
@@ -610,9 +622,18 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 			var lo_v: float = wave_lo[wi] * (1.0 - wf) + wave_lo[wi + 1] * wf
 			var hi_v: float = wave_hi[wi] * (1.0 - wf) + wave_hi[wi + 1] * wf
 			raw = lo_v + (hi_v - lo_v) * wave_mix
+			# 🔴 ЗАВОРАЧИВАТЬ НАДО В ОБЕ СТОРОНЫ, а не только вверх.
+			# Мгновенная частота бывает ОТРИЦАТЕЛЬНОЙ: при частотной модуляции
+			# `step = (base_freq * pitch_mul + carrier_dev) * speed / rate`, и
+			# отклонение `carrier_dev` половину периода модулятора больше
+			# несущей. С проверкой `if phase >= 1.0` фаза уходила в минус,
+			# номер в таблице зажимался в ноль, а дробная часть оставалась
+			# отрицательной — вместо чтения таблицы шла экстраполяция за её
+			# край. Замерено: у `note("c2").s("sawtooth").fm(3)` пик доходил
+			# до 5.4972 против 0.2206 без модуляции. ФМ-источники в этом же
+			# файле завёрнуты правильно (`p_k = p_k - floor(p_k)`).
 			phase += step
-			if phase >= 1.0:
-				phase -= 1.0
+			phase = phase - floor(phase)
 		elif src == Source.WHITE:
 			raw = _rng.randf() * 2.0 - 1.0
 		elif src == Source.PINK:
@@ -762,9 +783,15 @@ func _source_sample() -> float:
 			if sample.is_empty():
 				return 0.0
 			var idx := int(_sample_pos)
-			if idx >= sample.size() - 1:
+			var stop := mini(int(_sample_stop), sample.size() - 1)
+			if idx >= stop:
 				if sample_loop:
-					_sample_pos = fmod(_sample_pos, float(sample.size() - 1))
+					# Петля идёт по КУСКУ, а не по всему файлу.
+					var span := maxf(_sample_stop - clampf(sample_begin, 0.0, 1.0)
+						* float(sample.size() - 1), 1.0)
+					_sample_pos = clampf(sample_begin, 0.0, 1.0) \
+						* float(sample.size() - 1) \
+						+ fmod(_sample_pos, span)
 					idx = int(_sample_pos)
 				else:
 					active = false

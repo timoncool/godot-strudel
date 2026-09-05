@@ -188,6 +188,30 @@ static func configure(voice: StrudelVoice, value: Dictionary, length: float,
 	# Растяжка по высоте у многосэмплированных складывается со .speed().
 	voice.speed = voice.speed * float(picked.get("speed", 1.0))
 
+	# 🔴 BEGIN, END И UNIT БЕРУТСЯ ИЗ СОБЫТИЯ.
+	#
+	# Раньше тут читались только отсчёты, частота и скорость, а `begin`, `end`
+	# и `unit` в голос не попадали вовсе. Событие при этом было ВЕРНЫМ, и
+	# сверка событий на 143 выражениях и 32 треках молчала, — а звук был не
+	# тот: `s("bell").chop(4)` играл файл целиком четыре раза, замерено —
+	# получившийся wav совпадал с `fast(4)` отсчёт в отсчёт.
+	#
+	# Оригинал: `sampler.mjs:88` — `const { begin = 0, end = 1 } = hapValue;`
+	# Этим живут `chop`, `striate`, `slice` и `splice`: они режут не звук, а
+	# событие, выставляя каждому куску свою пару долей буфера.
+	voice.sample_begin = clampf(_num(value, "begin", 0.0), 0.0, 1.0)
+	voice.sample_end = clampf(_num(value, "end", 1.0), 0.0, 1.0)
+	if voice.sample_end <= voice.sample_begin:
+		voice.sample_end = 1.0
+
+	# `unit("c")` меряет скорость В ЦИКЛАХ: сэмпл растягивается на столько
+	# циклов, сколько просит `speed`. Оригинал домножает скорость на ДЛИНУ
+	# буфера в секундах (`sampler.mjs:71`) — этим работают `loopAt` и `fit`.
+	if String(value.get("unit", "")) == "c":
+		var frames := (picked["data"] as PackedFloat32Array).size()
+		var file_rate := maxf(float(picked.get("rate", 48000.0)), 1.0)
+		voice.speed = voice.speed * (float(frames) / file_rate)
+
 
 static func _midi_of(value: Dictionary) -> float:
 	if value.has("freq"):
@@ -197,8 +221,20 @@ static func _midi_of(value: Dictionary) -> float:
 		if n is String or n is StringName:
 			return float(StrudelUtil.note_to_midi(String(n)))
 		return float(n)
-	# `n` без ноты — это индекс сэмпла, а не высота: высота тогда средняя.
-	return 60.0
+	# 🔴 СОБЫТИЕ БЕЗ НОТЫ ЗВУЧИТ ОТ C2 (midi 36), А НЕ ОТ C4.
+	#
+	# `n` без ноты — это индекс сэмпла, а не высота, и высоту тогда задаёт
+	# умолчание. В оригинале оно 36 сразу в двух местах:
+	# `getFrequencyFromValue(value, defaultNote = 36)` (superdough/helpers.mjs)
+	# для синтеза и `valueToMidi(hapValue, 36)` (superdough/util.mjs) для
+	# выбора сэмпла. Здесь стояло 60 — и `s("sawtooth")` без ноты звучал
+	# 261.47 Гц вместо 65.41, ровно НА ДВЕ ОКТАВЫ выше эталона, а в
+	# многосэмплированном банке бралась не та запись.
+	#
+	# Почему сверки проспали: в `tools/judge/effects.json` все сорок один узел
+	# записаны как `note("c3").s(…)` — выражения БЕЗ ноты не было ни одного, а
+	# событие при этом верное, поэтому и сверка событий молчала.
+	return 36.0
 
 
 static func _num(value: Dictionary, key: String, fallback: float) -> float:
