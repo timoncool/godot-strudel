@@ -215,7 +215,7 @@ static func global_call(rt, name: String, args: Array) -> Variant:
 
 	# Всё остальное — либо параметр, либо метод, взятый как функция.
 	if StrudelControls.is_control(name):
-		return StrudelControls.make(name, _arg(args, 0))
+		return StrudelControls.make(name, _control_arg(name, args))
 	if _is_pattern_method(name):
 		# `fast(2)` как значение → функция, применяемая к паттерну.
 		return func(inner: Array) -> Variant:
@@ -638,7 +638,7 @@ static func method_call(rt, pat: StrudelPattern, name: String, args: Array) -> V
 
 	# Параметр звука: .gain(0.5), .lpf(600), .s("piano")…
 	if StrudelControls.is_control(name):
-		return StrudelControls.apply(pat, name, _arg(args, 0))
+		return StrudelControls.apply(pat, name, _control_arg(name, args))
 	return {"__unknown": true}
 
 
@@ -756,4 +756,31 @@ static func _fns(args: Array) -> Array:
 		if a is Callable:
 			var c: Callable = a
 			out.append(func(p): return c.call([p]))
+	return out
+
+
+static func _control_arg(name: String, args: Array) -> Variant:
+	## 🔴 У ПАРАМЕТРА БЫВАЕТ НЕСКОЛЬКО ДОВОДОВ, И ЛИШНИЕ ТЕРЯЛИСЬ.
+	##
+	## Здесь брался только `args[0]`, а параметры вроде `shape`, `distort` и
+	## `compressor` объявлены НЕСКОЛЬКИМИ именами: `["shape", "shapevol"]`,
+	## `["distort", "distortvol", "distorttype"]`, у сжатия пять. В оригинале
+	## они регистрируются с арностью по числу имён, и `.shape(0.7, 0.2)`
+	## кладёт в событие обе величины. У порта второй довод не доезжал до
+	## события вовсе — замерено: `shape(0.7, 0.2)` звучал ровно так же
+	## громко, как `shape(0.7)`, отношение СКЗ 1.0000 вместо 0.2.
+	##
+	## `StrudelControls.with_value` уже умеет разбирать СПИСОК по именам —
+	## значит достаточно отдать ему список, когда доводов больше одного.
+	if args.size() <= 1:
+		return _arg(args, 0)
+	var main := StrudelControlsTable.main_name(name)
+	if main == "":
+		return _arg(args, 0)
+	var names: Array = (StrudelControlsTable.CONTROLS[main] as Dictionary)["names"]
+	if names.size() <= 1:
+		return _arg(args, 0)
+	var out: Array = []
+	for i in mini(args.size(), names.size()):
+		out.append(_arg(args, i))
 	return out

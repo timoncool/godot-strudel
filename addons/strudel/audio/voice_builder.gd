@@ -57,9 +57,19 @@ static func configure(voice: StrudelVoice, value: Dictionary, length: float,
 	voice.crush = _num(value, "crush", 0.0)
 	voice.coarse = _num(value, "coarse", 0.0)
 	voice.shape = _num(value, "shape", 0.0)
+	# 🔴 ВТОРОЙ ДОВОД `shape` — ЭТО ГРОМКОСТЬ ПОСЛЕ УЗЛА, и он применяется.
+	# Оригинал, `worklets.mjs:285-289`: `postgain = max(0.001, min(1, …))`,
+	# и выход умножается на него. В порту он разбирался таблицей управляющих
+	# величин и никуда не шёл: `shape(0.7, 0.2)` звучал так же громко, как
+	# `shape(0.7)` — замерено, отношение СКЗ ровно 1.0000 вместо 0.2.
+	voice.shape_vol = clampf(_num(value, "shapevol", 1.0), 0.001, 1.0)
 	voice.room = _num(value, "room", 0.0)
 	voice.delay_send = _num(value, "delay", 0.0)
-	voice.orbit = int(_num(value, "orbit", 0.0))
+	# 🔴 УМОЛЧАНИЕ ОРБИТЫ — ЕДИНИЦА, А НЕ НОЛЬ. В Strudel событие без `orbit`
+	# и событие с `.orbit(1)` живут на ОДНОЙ шине: делят одну линию эха и один
+	# зал. С нулём они расходились по разным шинам, и в звуке появлялся лишний
+	# хвост, которого в эталоне нет.
+	voice.orbit = int(_num(value, "orbit", 1.0))
 
 	# ── перегруз ──
 	voice.distort = _num(value, "distort", 0.0)
@@ -93,8 +103,20 @@ static func configure(voice: StrudelVoice, value: Dictionary, length: float,
 
 	# ── огибающие фильтров ──
 	# ── синтез: своя волна, стая, модуляция ──
-	voice.wave_partials = _list_of(value.get("partials", null))
-	voice.wave_phases = _list_of(value.get("phases", null))
+	# 🔴 ЧИСЛО В `partials` — ЭТО СКОЛЬКО ГАРМОНИК, А НЕ ВЕС ОДНОЙ.
+	# Оригинал, `synth.mjs:458`:
+	#   const isList = typeof partials === 'object';
+	#   partials = isList ? partials : new Float32Array(partials).fill(1);
+	# То есть `partials(8)` — восемь ЕДИНИЧНЫХ обертонов. Порт понимал это как
+	# список из одного числа `[8]`, то есть одну гармонику весом восемь, и
+	# после приведения к единичному пику выходил чистый синус: замерено, в
+	# спектре одна линия 61 дБ, остальные ниже −26.
+	voice.wave_partials = _partials_of(value.get("partials", null))
+	# Зеркальная половина: у ЧИСЛА в `phases` в оригинале нет `[n]`, и
+	# `phases?.[n] ?? 0` даёт ноль — то есть число там не значит ничего.
+	var phases_raw: Variant = value.get("phases", null)
+	voice.wave_phases = _list_of(phases_raw) if phases_raw is Array \
+		else PackedFloat32Array()
 	voice.unison = int(_num(value, "unison", 5.0))
 	# 🔴 Разброс стаи берётся из `detune`, а если его нет — из `n`, и только
 	# потом из умолчания 0.18 (`synth.mjs:157`). Поэтому `s("supersaw").n(1)`
@@ -211,6 +233,22 @@ static func configure(voice: StrudelVoice, value: Dictionary, length: float,
 		var frames := (picked["data"] as PackedFloat32Array).size()
 		var file_rate := maxf(float(picked.get("rate", 48000.0)), 1.0)
 		voice.speed = voice.speed * (float(frames) / file_rate)
+
+
+static func _partials_of(v: Variant) -> PackedFloat32Array:
+	## `partials` в Strudel принимает и список весов, и ЧИСЛО. Число значит
+	## «столько единичных гармоник» (`synth.mjs:458`), а не вес одной.
+	if v == null:
+		return PackedFloat32Array()
+	if v is Array or v is PackedFloat32Array:
+		return _list_of(v)
+	var count := int(StrudelPattern._num(v))
+	if count <= 0:
+		return PackedFloat32Array()
+	var out := PackedFloat32Array()
+	out.resize(count)
+	out.fill(1.0)
+	return out
 
 
 static func _midi_of(value: Dictionary) -> float:

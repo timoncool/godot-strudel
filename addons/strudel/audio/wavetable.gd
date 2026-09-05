@@ -33,7 +33,7 @@ const RANGES := 36
 ## считать все две тысячи — секунды впустую на первой же ноте.
 const NORM_PARTIALS := 512
 
-enum Kind { SAW, SQUARE, TRIANGLE, SINE, USER }
+enum Kind { SAW, SQUARE, TRIANGLE, SINE, USER, NATIVE_SAW, NATIVE_TRIANGLE }
 
 ## Готовые таблицы: "вид:номер_полосы" → отсчёты.
 static var _tables: Dictionary = {}
@@ -107,6 +107,22 @@ static func _build(kind: int, partials: int, scale: float) -> PackedFloat32Array
 				imag = 0.0 if n % 2 == 0 else 1.0 / float(n)
 			Kind.TRIANGLE:
 				real = 0.0 if n % 2 == 0 else 1.0 / float(n * n)
+			Kind.NATIVE_SAW:
+				# 🔴 ШТАТНЫЙ ОСЦИЛЛЯТОР WEBAUDIO, А НЕ `waveformN`.
+				# Коэффициенты выше — те, что Strudel применяет ТОЛЬКО когда
+				# задан `partials` (`synth.mjs:467`). Без него он ставит
+				# `o.type = 'sawtooth'` (`synth.mjs:95`), а у штатной волны
+				# другая фаза: она идёт от нуля ВВЕРХ, тогда как по тем
+				# коэффициентам сразу падает в минимум. Замерено на таблице:
+				# `table(SAW,0)[1]` = −1.001.
+				imag = (1.0 if n % 2 == 1 else -1.0) / float(n)
+			Kind.NATIVE_TRIANGLE:
+				# Штатный треугольник в фазе 0 равен нулю и растёт до пика к
+				# четверти цикла; по коэффициентам `waveformN` он стартует с
+				# полного размаха — замерено, `table(TRIANGLE,0)[0]` = +1.001.
+				if n % 2 == 1:
+					var half := (n - 1) / 2
+					imag = (1.0 if half % 2 == 0 else -1.0) / float(n * n)
 		if real == 0.0 and imag == 0.0:
 			continue
 		var w := TAU * float(n) / float(SIZE)

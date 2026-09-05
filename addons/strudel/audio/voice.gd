@@ -65,6 +65,8 @@ var vowel := ""
 var crush := 0.0
 var coarse := 0.0
 var shape := 0.0
+## Громкость после узла мягкого ограничения — второй довод `shape`.
+var shape_vol := 1.0
 
 ## Отправки на общие эффекты.
 ## Перегруз: величина, громкость после него и НОМЕР КРИВОЙ.
@@ -228,10 +230,16 @@ func _setup_wavetable() -> void:
 	## тоже выбирается по частоте осциллятора, а она за ноту не меняется.
 	_wave_kind = -1
 	_wave_key = ""
+	# 🔴 БЕЗ `partials` ИГРАЕТ ШТАТНАЯ ВОЛНА, А НЕ `waveformN`.
+	# Коэффициенты `waveformN` (`synth.mjs:467`) Strudel применяет ТОЛЬКО
+	# когда заданы свои обертоны; иначе он ставит `o.type = 'sawtooth'`
+	# (`synth.mjs:95`) — штатный осциллятор WebAudio, а у него другая
+	# начальная фаза. Порт брал коэффициенты всегда, и нота начиналась не с
+	# того места: у треугольника с полного размаха, у пилы вниз вместо вверх.
 	match source:
-		Source.SAW: _wave_kind = StrudelWavetable.Kind.SAW
+		Source.SAW: _wave_kind = StrudelWavetable.Kind.NATIVE_SAW
 		Source.SQUARE: _wave_kind = StrudelWavetable.Kind.SQUARE
-		Source.TRIANGLE: _wave_kind = StrudelWavetable.Kind.TRIANGLE
+		Source.TRIANGLE: _wave_kind = StrudelWavetable.Kind.NATIVE_TRIANGLE
 		Source.CUSTOM: _wave_kind = StrudelWavetable.Kind.USER
 	if _wave_kind < 0:
 		return
@@ -705,7 +713,8 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 		if use_crush and crush_steps >= 1.0:
 			s = round(s * crush_steps) / crush_steps
 		if use_shape:
-			s = (1.0 + shape_f) * s / (1.0 + shape_f * absf(s))
+			# Второй довод `shape` — громкость ПОСЛЕ узла (`worklets.mjs:289`).
+			s = (1.0 + shape_f) * s / (1.0 + shape_f * absf(s)) * shape_vol
 		if use_distort:
 			s = distort_gain * distort_sample(s, distort_k, distort_algo)
 		if use_tremolo:
