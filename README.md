@@ -130,8 +130,6 @@ Neither is required to use this plugin — but writing music in a browser where 
 | `examples/05_community_tunes` | All 32 community tunes from Strudel's own collection — space cycles through them |
 | `examples/07_repl` | Live-coding player: paste Strudel code, hear it, watch the events and the output scope |
 
-![Live-coding player](docs/repl.png)
-
 ## Other Projects by [@timoncool](https://github.com/timoncool)
 
 | Project | Description |
