@@ -105,6 +105,12 @@ func _ready() -> void:
 
 
 func _build() -> void:
+	# 🔴 СБОРКА НЕ ДОЛЖНА ИДТИ ДВАЖДЫ. `_build` зовётся из шести мест —
+	# `_ready`, смена банка, смена числа голосов, смена упреждения, —
+	# и каждый раз заводил НОВЫЙ движок поверх работающего: старый оставался
+	# с подключёнными сигналами и своими голосами, а звук шёл уже из нового.
+	if _engine != null:
+		_engine.shutdown()
 	_engine = StrudelEngine.new()
 	_engine.max_voices = max_voices
 	_engine.lookahead = lookahead

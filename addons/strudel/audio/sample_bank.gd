@@ -137,9 +137,32 @@ func _load_map(json_path: String) -> void:
 			for item in value:
 				entry["files"].append(folder.path_join(_decode(String(item))))
 		elif value is Dictionary:
-			for note in value:
-				var midi := StrudelUtil.note_to_midi(String(note), 3)
-				entry["pitched"][midi] = folder.path_join(_decode(String(value[note])))
+			# 🔴 У ВЛОЖЕННОЙ ЗАПИСИ БЫВАЕТ СВОЙ `_base` И СПИСОК ФАЙЛОВ НА НОТУ.
+			# Настоящие карты Strudel выглядят так:
+			#   "stage73": {"_base": "https://…/", "c2": ["quiet.mp3", "loud.mp3"]}
+			# Служебный ключ уходил в `note_to_midi("_base")` — ошибка «не нота»
+			# при каждой загрузке папки и запись с высотой 0, перехватывавшая
+			# низкие ноты. А список файлов превращался в путь из его текстовой
+			# записи, то есть в несуществующий файл.
+			var inner: Dictionary = value
+			var sub := folder
+			var inner_base := String(inner.get("_base", ""))
+			if inner_base != "" and not inner_base.begins_with("http"):
+				sub = folder.path_join(inner_base)
+			for note in inner:
+				var note_name := String(note)
+				if note_name.begins_with("_"):
+					continue
+				var midi := StrudelUtil.note_to_midi(note_name, 3)
+				var one: Variant = inner[note]
+				# Список на одну ноту — это варианты записи; берём первый, как
+				# и в остальном сэмплере при `n = 0`.
+				if one is Array:
+					var list_one: Array = one
+					if list_one.is_empty():
+						continue
+					one = list_one[0]
+				entry["pitched"][midi] = sub.path_join(_decode(String(one)))
 		else:
 			continue
 		entries[k] = entry

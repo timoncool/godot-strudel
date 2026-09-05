@@ -240,12 +240,31 @@ func _instrument_zones(inst: PackedByteArray, ibag: PackedByteArray, igen: Packe
 		var gens := _gens(igen, gen_from, gen_to)
 		if not gens.has(GEN_SAMPLE_ID):
 			continue
-		var key_range := int(gens.get(GEN_KEY_RANGE, from_preset.get(GEN_KEY_RANGE, 0x7F00)))
+		# 🔴 ОКНО ПРЕСЕТА ПЕРЕСЕКАЕТСЯ С ОКНОМ ИНСТРУМЕНТА, А НЕ ПОДМЕНЯЕТ ЕГО.
+		# По устройству SF2 зона пресета задаёт, КАКИЕ клавиши вообще уходят в
+		# инструмент, а зона инструмента — какие внутри него. Раньше окно
+		# пресета бралось лишь запасным вариантом, когда своего у зоны нет, и
+		# слоёный пресет («до 59 — бас, от 60 — рояль») играл нотой 72 басом:
+		# все зоны ложились в один плоский список, и `resolve` брал первую
+		# подходящую.
+		var own := int(gens.get(GEN_KEY_RANGE, 0x7F00))
+		var outer := int(from_preset.get(GEN_KEY_RANGE, 0x7F00))
+		var lo := maxi(own & 0xFF, outer & 0xFF)
+		var hi := mini((own >> 8) & 0xFF, (outer >> 8) & 0xFF)
+		if lo > hi:
+			# Окна не пересекаются — этой зоне не достаётся ни одной клавиши.
+			continue
 		out.append({
 			"sample": int(gens[GEN_SAMPLE_ID]),
-			"key_lo": key_range & 0xFF,
-			"key_hi": (key_range >> 8) & 0xFF,
-			"root": int(gens.get(GEN_ROOT_KEY, -1)),
+			"key_lo": lo,
+			"key_hi": hi,
+			# 🔴 СО ЗНАКОМ. `_gens` читает величины беззнаково, а этот опкод
+			# знаковый: записанное в файле «нет своего тона» (−1) превращалось
+			# в 65535, проверка `>= 0` его пропускала, и растяжка выходила
+			# `pow(2, (60 − 65535)/12)` = 0 — сэмпл не двигался вовсе, и вместо
+			# ноты голос тянул постоянную составляющую. Функция `_signed16`
+			# лежала рядом и не звалась.
+			"root": _signed16(int(gens.get(GEN_ROOT_KEY, 65535))),
 			"fine": _signed16(int(gens.get(GEN_FINE_TUNE, 0))),
 			"coarse": _signed16(int(gens.get(GEN_COARSE_TUNE, 0))),
 			"modes": int(gens.get(GEN_SAMPLE_MODES, 0)),
