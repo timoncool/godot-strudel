@@ -8,6 +8,8 @@ extends StrudelTestBase
 ## поставке не было и чтобы проверка не зависела от сети.
 
 const PACK_DIR := "res://examples/02_own_samples"
+## Второй пак — рояль примера «Пока горит окно»: карта нот в отдельной папке.
+const PIANO_DIR := "res://examples/06_okno"
 
 
 func _bank() -> StrudelSampleBank:
@@ -21,6 +23,32 @@ func test_карта_формата_strudel_читается() -> void:
 	check(not bank.is_empty(), "банк не пуст: %d имён" % bank.count())
 	for name in ["bd", "sd", "hh", "bell"]:
 		check(bank.entries.has(name), "имя \"%s\" на месте" % name)
+
+
+func test_банк_копит_паки_а_не_подменяет() -> void:
+	# 🔴 ДВА ПАКА ЖИВУТ В ОДНОМ БАНКЕ. В Strudel реестр звуков накопительный
+	# (`soundMap.setKey`, `superdough/superdough.mjs:61`), и `samples()` зовут
+	# по разу на пак. Здесь `load_folder` чистил банк, и второй вызов
+	# ВЫБРАСЫВАЛ первый: рояль (2 имени) плюс барабаны (4) давали 4 вместо 6,
+	# и трек с бочкой и роялем звучал наполовину.
+	var bank := StrudelSampleBank.new()
+	bank.load_folder(ProjectSettings.globalize_path(PIANO_DIR))
+	var after_piano := bank.count()
+	check(bank.entries.has("piano"), "рояль загрузился: %d имён" % after_piano)
+	bank.load_folder(ProjectSettings.globalize_path(PACK_DIR))
+	check(bank.entries.has("piano") and bank.entries.has("bd"),
+		"после второго пака на месте оба: имён %d (было %d)"
+		% [bank.count(), after_piano])
+	check(bank.count() > after_piano,
+		"банк вырос, а не подменился: %d > %d" % [bank.count(), after_piano])
+
+
+func test_забыть_паки_можно_явно() -> void:
+	# Чистка осталась, но отдельным действием — иначе её не отличить от долива.
+	var bank := _bank()
+	check(not bank.is_empty(), "банк набран: %d имён" % bank.count())
+	bank.clear()
+	check(bank.is_empty(), "после clear() банк пуст")
 
 
 func test_индекс_выбирает_нужный_файл() -> void:

@@ -43,26 +43,44 @@ const AUDIO_EXTS := ["wav", "ogg", "mp3"]
 
 
 func load_folder(path: String) -> int:
-	## Загружает все карты (*.json) и все звуки из папки. → сколько имён вышло.
+	## Загружает все карты (*.json) и все звуки из папки. → сколько имён в
+	## банке ВСЕГО после долива.
+	##
+	## 🔴 БАНК КОПИТ ПАКИ, А НЕ ПОДМЕНЯЕТ ИХ. В Strudel реестр звуков общий и
+	## накопительный (`soundMap.setKey`, `superdough/superdough.mjs:61`), а
+	## `samples()` зовут по разу на пак: рояль, барабаны, свой набор. Здесь
+	## стояло `entries.clear()`, и второй вызов ВЫБРАСЫВАЛ первый пак —
+	## замерено на примерах: пак рояля даёт 2 имени, пак барабанов 4, вместе
+	## должно быть 6, а выходило 4 — рояль пропадал молча, и трек с бочкой и
+	## роялем звучал наполовину.
 	root_path = path
-	entries.clear()
-	_cache.clear()
 	var dir := DirAccess.open(path)
 	if dir == null:
 		push_warning("Strudel: папки сэмплов нет — %s. Играю синтезом." % path)
-		return 0
+		return entries.size()
 
 	# 1) карты формата Strudel
-	for file in _list(path, [".json"]):
-		_load_map(file)
 	var from_maps := {}
-	for key in entries:
-		from_maps[key] = true
+	for file in _list(path, [".json"]):
+		_load_map(file, from_maps)
 	# 2) отдельные звуки: имя папки или файла становится именем инструмента.
-	# 🔴 Только то, чего НЕТ в картах: иначе один и тот же звук попадает в
-	# список дважды, и `bd:1` начинает указывать не на тот файл.
+	# 🔴 Только то, чего НЕТ в картах ЭТОЙ ЖЕ папки: иначе один и тот же звук
+	# попадает в список дважды, и `bd:1` начинает указывать не на тот файл.
+	# Имена из ДРУГИХ паков здесь не при чём — по оригиналу побеждает тот, кто
+	# зарегистрирован последним.
+	var before := entries.size()
 	_scan_audio(path, "", from_maps)
+	if entries.size() == before and from_maps.is_empty():
+		push_warning("Strudel: в папке \"%s\" не нашлось сэмплов." % path)
 	return entries.size()
+
+
+func clear() -> void:
+	## Забыть все паки. Отдельным действием, потому что загрузка их копит.
+	entries.clear()
+	_cache.clear()
+	_rates.clear()
+	_complained.clear()
 
 
 func _list(path: String, suffixes: Array) -> Array:
@@ -109,7 +127,7 @@ func _scan_audio(path: String, prefix: String, skip: Dictionary) -> void:
 		(entries[key]["files"] as Array).sort()
 
 
-func _load_map(json_path: String) -> void:
+func _load_map(json_path: String, touched: Dictionary = {}) -> void:
 	var f := FileAccess.open(json_path, FileAccess.READ)
 	if f == null:
 		return
@@ -166,6 +184,7 @@ func _load_map(json_path: String) -> void:
 		else:
 			continue
 		entries[k] = entry
+		touched[k] = true
 
 
 static func _decode(text: String) -> String:
