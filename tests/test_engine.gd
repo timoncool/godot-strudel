@@ -142,3 +142,31 @@ func test_общий_генератор_игры_не_трогается() -> vo
 		got.append(randi())
 	for i in want.size():
 		eq(str(got[i]), str(want[i]), "общий генератор на месте, число %d" % i)
+
+
+func test_сброс_часов_уносит_хвост_эха() -> void:
+	# 🔴 РЕГРЕССИЯ. Голоса глушились, а в орбитах оставались до двух секунд
+	# записанного эха и звенящие гребёнки зала — и они звучали уже в
+	# СЛЕДУЮЩЕМ треке. Проверка: набить эхо, сбросить часы, поставить заведомо
+	# молчащий паттерн и убедиться, что выход пуст.
+	var e := StrudelEngine.new()
+	e.setup(48000.0)
+	var loud: Dictionary = StrudelRuntime.run(
+		's("bd*4").delay(0.9).delayfeedback(0.9).delaytime(0.25)')
+	check(loud.get("ok", false), "громкий паттерн собрался")
+	e.set_pattern(loud["pattern"])
+	for i in 24:
+		e.render_block(4096)
+
+	e.reset_clock()
+	var quiet: Dictionary = StrudelRuntime.run('s("~")')
+	check(quiet.get("ok", false), "молчащий паттерн собрался")
+	e.set_pattern(quiet["pattern"])
+
+	var peak := 0.0
+	for i in 12:
+		var blocks: Array = e.render_block(4096)
+		for chan in blocks:
+			for v in (chan as PackedFloat32Array):
+				peak = maxf(peak, absf(v))
+	check(peak < 1e-4, "после сброса часов тишина: пик %s" % String.num_scientific(peak))

@@ -73,9 +73,18 @@ static func _recurse(ons: int, offs: int, xs: Array, ys: Array) -> Array:
 
 static func euclid_rot(pulses: int, steps: int, rotation: int = 0) -> Array:
 	var b := bjorklund(pulses, steps)
-	if rotation != 0:
-		return StrudelUtil.rotate_array(b, -rotation)
-	return b
+	if rotation == 0:
+		return b
+	# 🔴 ПОВОРОТ БОЛЬШЕ ЧИСЛА ШАГОВ НЕ КРУТИТ РИСУНОК ПО КРУГУ.
+	# В оригинале это `rotate(arr, n) = arr.slice(n).concat(arr.slice(0, n))`
+	# (`util.mjs:153`), а `slice` в JS ОБРЕЗАЕТ выход за край, а не заворачивает
+	# по модулю: при `euclidRot(3, 8, 9)` выходит первый кусок целиком плюс
+	# пустой хвост, то есть рисунок БЕЗ поворота. Наш `mod_i(-9, 8)` давал 7 и
+	# уводил удары на другие доли.
+	var by := -rotation
+	if by > b.size() or by < -b.size():
+		return b
+	return StrudelUtil.rotate_array(b, by)
 
 
 static func apply(pat: StrudelPattern, pulses: int, steps: int, rotation: int = 0) -> StrudelPattern:

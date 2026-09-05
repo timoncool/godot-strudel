@@ -49,24 +49,14 @@ static func from_values(a: Variant, d: Variant, s: Variant, r: Variant,
 	env.release = maxf(float(r) if r != null else 0.0, RELEASE_MIN)
 	return env
 
-
-func level_at(time: float, note_length: float) -> float:
-	## Уровень в момент `time` от начала ноты. После `note_length` — отпускание.
-	if time < 0.0:
-		return 0.0
-	if time < attack:
-		return time / attack
-	var held := time - attack
-	if held < decay:
-		# спад от единицы к сустейну
-		return 1.0 + (sustain - 1.0) * (held / decay)
-	if time < note_length:
-		return sustain
-	var since_release := time - note_length
-	if since_release >= release:
-		return 0.0
-	var from_level := sustain if note_length > attack + decay else level_at(note_length, note_length + 1e9)
-	return from_level * (1.0 - since_release / release)
+# 🔴 ЗДЕСЬ ЖИЛ `level_at` — ВТОРАЯ КОПИЯ ФОРМЫ ОГИБАЮЩЕЙ.
+#
+# Настоящая форма считается в теле цикла `StrudelVoice.render`, где она
+# развёрнута ради цены: вызов функции в GDScript стоит больше самой
+# арифметики. `level_at` был её независимым двойником, который никто не
+# звал, кроме него самого, и ничто не проверяло. Любая правка формы —
+# скажем, спад по показательной кривой вместо прямой — уехала бы только
+# в одну из двух, а следующий читатель поверил бы той, что ближе лежит.
 
 
 func total_length(note_length: float) -> float:

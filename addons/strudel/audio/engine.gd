@@ -102,6 +102,19 @@ func setup(rate: float) -> void:
 func reset_clock() -> void:
 	_q_invalidate()
 	_q_join()
+	# 🔴 ХВОСТЫ ОРБИТ ТОЖЕ СБРАСЫВАЮТСЯ. Голоса глушились, а в орбитах
+	# оставались до двух секунд записанного эха и звенящие гребёнки зала —
+	# и они звучали уже в СЛЕДУЮЩЕМ треке: линия задержки читалась ровно с
+	# того места, где её бросили, и подмешивалась в выход независимо от того,
+	# посылает ли туда что-нибудь новый паттерн.
+	for key in _orbits:
+		var orb: Dictionary = _orbits[key]
+		var line: PackedFloat32Array = orb["line"]
+		line.fill(0.0)
+		orb["head"] = 0
+		var rev = orb.get("reverb")
+		if rev != null and rev.has_method("setup"):
+			rev.setup(mix_rate)
 	clipped_frames = 0
 	_frames_written = 0
 	_scheduled.clear()
