@@ -17,3 +17,7 @@ tools/judge/golden/*.raw
 # банк VCSL подключается стыком к папке пользователя, треки галереи — чужие работы.
 tools/judge/vcslbank/
 tools/judge/gallery/
+
+# Кеш питона — порождается прогоном
+__pycache__/
+*.pyc
