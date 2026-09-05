@@ -43,6 +43,11 @@ signal voices_exhausted(total_stolen: int, limit: int)
 ## Файл саундфонта (.sf2). Звуки из него адресуются как `sf:<банк>:<программа>`.
 @export_file("*.sf2") var soundfont_path := ""
 
+## Папка с пресетами webaudiofont (`0320_JCLive_sf2_file.js` и т. п.) — те
+## самые, что Strudel тянет для имён `gm_*` (`@strudel/soundfonts`). Пусто —
+## имена `gm_*` играют синтезом.
+@export_dir var gm_fonts_path := ""
+
 ## Темп в циклах в минуту. `setcpm(...)` в самом коде перебивает это значение.
 @export_range(1.0, 600.0, 0.1) var cycles_per_minute := 30.0:
 	set(value):
@@ -105,12 +110,6 @@ func _ready() -> void:
 
 
 func _build() -> void:
-	# 🔴 СБОРКА НЕ ДОЛЖНА ИДТИ ДВАЖДЫ. `_build` зовётся из шести мест —
-	# `_ready`, смена банка, смена числа голосов, смена упреждения, —
-	# и каждый раз заводил НОВЫЙ движок поверх работающего: старый оставался
-	# с подключёнными сигналами и своими голосами, а звук шёл уже из нового.
-	if _engine != null:
-		_engine.shutdown()
 	_engine = StrudelEngine.new()
 	_engine.max_voices = max_voices
 	_engine.lookahead = lookahead
@@ -124,6 +123,15 @@ func _build() -> void:
 		if n == 0:
 			push_warning("Strudel: в папке \"%s\" не нашлось сэмплов — играю синтезом." % samples_path)
 	_engine.bank = _bank
+
+	if gm_fonts_path != "":
+		var gmf := StrudelGMFonts.new()
+		var found := gmf.load_folder(gm_fonts_path)
+		if found > 0:
+			_engine.gm_fonts = gmf
+			print("Strudel: пресеты gm_* — %d на диске" % found)
+		else:
+			push_warning("Strudel: в «%s» нет пресетов gm_*" % gm_fonts_path)
 
 	if soundfont_path != "":
 		var sf := StrudelSoundFont.new()

@@ -30,11 +30,11 @@ var source: Source = Source.SINE
 var sample: PackedFloat32Array = PackedFloat32Array()
 var sample_rate := 48000.0
 var sample_loop := false
-## Откуда и докуда играть сэмпл — ДОЛИ буфера, как `begin` и `end` в Strudel.
-## Ими живут `chop`, `striate`, `slice` и `splice`: они режут не звук, а
-## событие, и без этих двух чисел все куски играют файл целиком с начала.
-var sample_begin := 0.0
-var sample_end := 1.0
+## Границы петли в отсчётах сэмпла; ноль-ноль — петля по всему файлу.
+## У пресетов webaudiofont петля — короткий участок в середине записи
+## (`loopStart..loopEnd` у зоны), а не весь файл.
+var sample_loop_begin := 0.0
+var sample_loop_end := 0.0
 
 var frequency := 440.0
 var speed := 1.0
@@ -65,8 +65,6 @@ var vowel := ""
 var crush := 0.0
 var coarse := 0.0
 var shape := 0.0
-## Громкость после узла мягкого ограничения — второй довод `shape`.
-var shape_vol := 1.0
 
 ## Отправки на общие эффекты.
 ## Перегруз: величина, громкость после него и НОМЕР КРИВОЙ.
@@ -150,8 +148,6 @@ var _vib_phase := 0.0
 var _super_l := 0.0
 var _super_r := 0.0
 var _sample_pos := 0.0
-## Докуда играть в отсчётах — считается в `start()` из `sample_end`.
-var _sample_stop := 0.0
 var _rate := 48000.0
 ## СВОЙ генератор случайного — на весь плагин один.
 ##
@@ -189,11 +185,7 @@ func start(mix_rate: float) -> void:
 	_rate = mix_rate
 	_pos = 0
 	_phase = 0.0
-	# Начало и конец куска считаются ОДИН раз на ноте: в горячем цикле
-	# умножать на размер буфера незачем.
-	var last := maxf(float(sample.size() - 1), 0.0)
-	_sample_pos = clampf(sample_begin, 0.0, 1.0) * last
-	_sample_stop = clampf(sample_end, 0.0, 1.0) * last
+	_sample_pos = 0.0
 	_brown = 0.0
 	_pink = PackedFloat32Array()
 	_pink.resize(7)
@@ -230,16 +222,10 @@ func _setup_wavetable() -> void:
 	## тоже выбирается по частоте осциллятора, а она за ноту не меняется.
 	_wave_kind = -1
 	_wave_key = ""
-	# 🔴 БЕЗ `partials` ИГРАЕТ ШТАТНАЯ ВОЛНА, А НЕ `waveformN`.
-	# Коэффициенты `waveformN` (`synth.mjs:467`) Strudel применяет ТОЛЬКО
-	# когда заданы свои обертоны; иначе он ставит `o.type = 'sawtooth'`
-	# (`synth.mjs:95`) — штатный осциллятор WebAudio, а у него другая
-	# начальная фаза. Порт брал коэффициенты всегда, и нота начиналась не с
-	# того места: у треугольника с полного размаха, у пилы вниз вместо вверх.
 	match source:
-		Source.SAW: _wave_kind = StrudelWavetable.Kind.NATIVE_SAW
+		Source.SAW: _wave_kind = StrudelWavetable.Kind.SAW
 		Source.SQUARE: _wave_kind = StrudelWavetable.Kind.SQUARE
-		Source.TRIANGLE: _wave_kind = StrudelWavetable.Kind.NATIVE_TRIANGLE
+		Source.TRIANGLE: _wave_kind = StrudelWavetable.Kind.TRIANGLE
 		Source.CUSTOM: _wave_kind = StrudelWavetable.Kind.USER
 	if _wave_kind < 0:
 		return
@@ -316,8 +302,7 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 	var post := postgain
 	var freq_step := frequency * speed / rate
 	var sample_step := speed * (sample_rate / rate)
-	# Конец куска, а не конец файла: `end` режет по доле буфера.
-	var sample_last := mini(int(_sample_stop), sample.size() - 1)
+	var sample_last := sample.size() - 1
 	var wave_lo := StrudelWavetable.table(_wave_kind, _wave_lo) if _wave_kind >= 0 \
 		else PackedFloat32Array()
 	var wave_hi := StrudelWavetable.table(_wave_kind, _wave_hi) if _wave_kind >= 0 \
@@ -569,9 +554,12 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 		var raw := 0.0
 		if src == Source.SAMPLE:
 			var si := int(spos)
-			if si >= sample_last:
+			var loop_end_i := int(sample_loop_end) if sample_loop and sample_loop_end > sample_loop_begin else sample_last
+			if si >= mini(loop_end_i, sample_last):
 				if sample_loop and sample_last > 0:
-					spos = fmod(spos, float(sample_last))
+					var lb := sample_loop_begin if sample_loop_end > sample_loop_begin else 0.0
+					var span := float(mini(loop_end_i, sample_last)) - lb
+					spos = lb + fmod(spos - lb, maxf(span, 1.0))
 					si = int(spos)
 				else:
 					active = false
@@ -630,18 +618,9 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 			var lo_v: float = wave_lo[wi] * (1.0 - wf) + wave_lo[wi + 1] * wf
 			var hi_v: float = wave_hi[wi] * (1.0 - wf) + wave_hi[wi + 1] * wf
 			raw = lo_v + (hi_v - lo_v) * wave_mix
-			# 🔴 ЗАВОРАЧИВАТЬ НАДО В ОБЕ СТОРОНЫ, а не только вверх.
-			# Мгновенная частота бывает ОТРИЦАТЕЛЬНОЙ: при частотной модуляции
-			# `step = (base_freq * pitch_mul + carrier_dev) * speed / rate`, и
-			# отклонение `carrier_dev` половину периода модулятора больше
-			# несущей. С проверкой `if phase >= 1.0` фаза уходила в минус,
-			# номер в таблице зажимался в ноль, а дробная часть оставалась
-			# отрицательной — вместо чтения таблицы шла экстраполяция за её
-			# край. Замерено: у `note("c2").s("sawtooth").fm(3)` пик доходил
-			# до 5.4972 против 0.2206 без модуляции. ФМ-источники в этом же
-			# файле завёрнуты правильно (`p_k = p_k - floor(p_k)`).
 			phase += step
-			phase = phase - floor(phase)
+			if phase >= 1.0:
+				phase -= 1.0
 		elif src == Source.WHITE:
 			raw = _rng.randf() * 2.0 - 1.0
 		elif src == Source.PINK:
@@ -713,8 +692,7 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 		if use_crush and crush_steps >= 1.0:
 			s = round(s * crush_steps) / crush_steps
 		if use_shape:
-			# Второй довод `shape` — громкость ПОСЛЕ узла (`worklets.mjs:289`).
-			s = (1.0 + shape_f) * s / (1.0 + shape_f * absf(s)) * shape_vol
+			s = (1.0 + shape_f) * s / (1.0 + shape_f * absf(s))
 		if use_distort:
 			s = distort_gain * distort_sample(s, distort_k, distort_algo)
 		if use_tremolo:
@@ -792,15 +770,13 @@ func _source_sample() -> float:
 			if sample.is_empty():
 				return 0.0
 			var idx := int(_sample_pos)
-			var stop := mini(int(_sample_stop), sample.size() - 1)
-			if idx >= stop:
+			var last := sample.size() - 1
+			var loop_end_i := int(sample_loop_end) if sample_loop and sample_loop_end > sample_loop_begin else last
+			if idx >= mini(loop_end_i, last):
 				if sample_loop:
-					# Петля идёт по КУСКУ, а не по всему файлу.
-					var span := maxf(_sample_stop - clampf(sample_begin, 0.0, 1.0)
-						* float(sample.size() - 1), 1.0)
-					_sample_pos = clampf(sample_begin, 0.0, 1.0) \
-						* float(sample.size() - 1) \
-						+ fmod(_sample_pos, span)
+					var lb := sample_loop_begin if sample_loop_end > sample_loop_begin else 0.0
+					var span := float(mini(loop_end_i, last)) - lb
+					_sample_pos = lb + fmod(_sample_pos - lb, maxf(span, 1.0))
 					idx = int(_sample_pos)
 				else:
 					active = false

@@ -3,6 +3,18 @@
 Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версии по [семантическому версионированию](https://semver.org/lang/ru/).
 
+## [0.2.0] — 5 сентября 2026
+
+### Добавлено
+
+- **Голоса `gm_*`** — перенос `@strudel/soundfonts`: пресеты webaudiofont
+  (`0320_JCLive_sf2_file.js` и т. п.) читаются с диска из
+  [member StrudelPlayer.gm_fonts_path]; зона по диапазону клавиш, петля
+  `loopStart..loopEnd`, скорость от `originalPitch` в центах, ADSR из паттерна,
+  `.n(k)` выбирает k-й пресет списка. Список имён — `soundfonts/gm_presets.json`
+  из `gm.mjs` Strudel.
+- **Петля в границах** у сэмплов (`sample_loop_begin/end`), не только по всему файлу.
+
 ## [0.1.1] — 5 сентября 2026
 
 ### Исправлено

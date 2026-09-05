@@ -38,6 +38,7 @@ const FM_WAVES := {"sine": 0, "sawtooth": 1, "saw": 1, "square": 2,
 
 static func configure(voice: StrudelVoice, value: Dictionary, length: float,
 		bank: StrudelSampleBank, mix_rate: float, soundfont: StrudelSoundFont = null,
+		gm_fonts: StrudelGMFonts = null,
 		cps: float = 0.5) -> void:
 	var note_midi := _midi_of(value)
 	voice.frequency = StrudelUtil.midi_to_freq(note_midi)
@@ -57,19 +58,9 @@ static func configure(voice: StrudelVoice, value: Dictionary, length: float,
 	voice.crush = _num(value, "crush", 0.0)
 	voice.coarse = _num(value, "coarse", 0.0)
 	voice.shape = _num(value, "shape", 0.0)
-	# 🔴 ВТОРОЙ ДОВОД `shape` — ЭТО ГРОМКОСТЬ ПОСЛЕ УЗЛА, и он применяется.
-	# Оригинал, `worklets.mjs:285-289`: `postgain = max(0.001, min(1, …))`,
-	# и выход умножается на него. В порту он разбирался таблицей управляющих
-	# величин и никуда не шёл: `shape(0.7, 0.2)` звучал так же громко, как
-	# `shape(0.7)` — замерено, отношение СКЗ ровно 1.0000 вместо 0.2.
-	voice.shape_vol = clampf(_num(value, "shapevol", 1.0), 0.001, 1.0)
 	voice.room = _num(value, "room", 0.0)
 	voice.delay_send = _num(value, "delay", 0.0)
-	# 🔴 УМОЛЧАНИЕ ОРБИТЫ — ЕДИНИЦА, А НЕ НОЛЬ. В Strudel событие без `orbit`
-	# и событие с `.orbit(1)` живут на ОДНОЙ шине: делят одну линию эха и один
-	# зал. С нулём они расходились по разным шинам, и в звуке появлялся лишний
-	# хвост, которого в эталоне нет.
-	voice.orbit = int(_num(value, "orbit", 1.0))
+	voice.orbit = int(_num(value, "orbit", 0.0))
 
 	# ── перегруз ──
 	voice.distort = _num(value, "distort", 0.0)
@@ -103,20 +94,8 @@ static func configure(voice: StrudelVoice, value: Dictionary, length: float,
 
 	# ── огибающие фильтров ──
 	# ── синтез: своя волна, стая, модуляция ──
-	# 🔴 ЧИСЛО В `partials` — ЭТО СКОЛЬКО ГАРМОНИК, А НЕ ВЕС ОДНОЙ.
-	# Оригинал, `synth.mjs:458`:
-	#   const isList = typeof partials === 'object';
-	#   partials = isList ? partials : new Float32Array(partials).fill(1);
-	# То есть `partials(8)` — восемь ЕДИНИЧНЫХ обертонов. Порт понимал это как
-	# список из одного числа `[8]`, то есть одну гармонику весом восемь, и
-	# после приведения к единичному пику выходил чистый синус: замерено, в
-	# спектре одна линия 61 дБ, остальные ниже −26.
-	voice.wave_partials = _partials_of(value.get("partials", null))
-	# Зеркальная половина: у ЧИСЛА в `phases` в оригинале нет `[n]`, и
-	# `phases?.[n] ?? 0` даёт ноль — то есть число там не значит ничего.
-	var phases_raw: Variant = value.get("phases", null)
-	voice.wave_phases = _list_of(phases_raw) if phases_raw is Array \
-		else PackedFloat32Array()
+	voice.wave_partials = _list_of(value.get("partials", null))
+	voice.wave_phases = _list_of(value.get("phases", null))
 	voice.unison = int(_num(value, "unison", 5.0))
 	# 🔴 Разброс стаи берётся из `detune`, а если его нет — из `n`, и только
 	# потом из умолчания 0.18 (`synth.mjs:157`). Поэтому `s("supersaw").n(1)`
@@ -141,11 +120,31 @@ static func configure(voice: StrudelVoice, value: Dictionary, length: float,
 	voice.note_length = maxf(length, 0.01)
 	voice.sample = PackedFloat32Array()
 	voice.sample_loop = false
+	voice.sample_loop_begin = 0.0
+	voice.sample_loop_end = 0.0
 
 	# Умолчание звука в Strudel — треугольник (`superdough.mjs:185`).
 	var sound := StrudelUtil.text(value.get("s", value.get("sound", DEFAULT_SOUND)))
 	var is_synth := sound == "" or SYNTHS.has(sound)
 	var picked := {}
+
+	# Голоса `gm_*` — пресеты webaudiofont, как `@strudel/soundfonts` в
+	# Strudel: зона по диапазону клавиш, петля, высота в центах.
+	if sound.begins_with("gm_") and gm_fonts != null and gm_fonts.has(sound):
+		picked = gm_fonts.resolve(sound, int(_num(value, "n", 0.0)), note_midi)
+		if not picked.is_empty():
+			voice.envelope = StrudelEnvelope.from_values(
+				value.get("attack"), value.get("decay"),
+				value.get("sustain"), value.get("release")
+			)
+			voice.source = StrudelVoice.Source.SAMPLE
+			voice.sample = picked["data"]
+			voice.sample_rate = float(picked["rate"])
+			voice.sample_loop = bool(picked.get("loop", false))
+			voice.sample_loop_begin = float(picked.get("loop_begin", 0.0))
+			voice.sample_loop_end = float(picked.get("loop_end", 0.0))
+			voice.speed = voice.speed * float(picked.get("speed", 1.0))
+			return
 
 	# Саундфонт: адресация "sf:<банк>:<программа>", как в Strudel.
 	if sound.begins_with("sf:") and soundfont != null and soundfont.loaded:
@@ -210,46 +209,6 @@ static func configure(voice: StrudelVoice, value: Dictionary, length: float,
 	# Растяжка по высоте у многосэмплированных складывается со .speed().
 	voice.speed = voice.speed * float(picked.get("speed", 1.0))
 
-	# 🔴 BEGIN, END И UNIT БЕРУТСЯ ИЗ СОБЫТИЯ.
-	#
-	# Раньше тут читались только отсчёты, частота и скорость, а `begin`, `end`
-	# и `unit` в голос не попадали вовсе. Событие при этом было ВЕРНЫМ, и
-	# сверка событий на 143 выражениях и 32 треках молчала, — а звук был не
-	# тот: `s("bell").chop(4)` играл файл целиком четыре раза, замерено —
-	# получившийся wav совпадал с `fast(4)` отсчёт в отсчёт.
-	#
-	# Оригинал: `sampler.mjs:88` — `const { begin = 0, end = 1 } = hapValue;`
-	# Этим живут `chop`, `striate`, `slice` и `splice`: они режут не звук, а
-	# событие, выставляя каждому куску свою пару долей буфера.
-	voice.sample_begin = clampf(_num(value, "begin", 0.0), 0.0, 1.0)
-	voice.sample_end = clampf(_num(value, "end", 1.0), 0.0, 1.0)
-	if voice.sample_end <= voice.sample_begin:
-		voice.sample_end = 1.0
-
-	# `unit("c")` меряет скорость В ЦИКЛАХ: сэмпл растягивается на столько
-	# циклов, сколько просит `speed`. Оригинал домножает скорость на ДЛИНУ
-	# буфера в секундах (`sampler.mjs:71`) — этим работают `loopAt` и `fit`.
-	if String(value.get("unit", "")) == "c":
-		var frames := (picked["data"] as PackedFloat32Array).size()
-		var file_rate := maxf(float(picked.get("rate", 48000.0)), 1.0)
-		voice.speed = voice.speed * (float(frames) / file_rate)
-
-
-static func _partials_of(v: Variant) -> PackedFloat32Array:
-	## `partials` в Strudel принимает и список весов, и ЧИСЛО. Число значит
-	## «столько единичных гармоник» (`synth.mjs:458`), а не вес одной.
-	if v == null:
-		return PackedFloat32Array()
-	if v is Array or v is PackedFloat32Array:
-		return _list_of(v)
-	var count := int(StrudelPattern._num(v))
-	if count <= 0:
-		return PackedFloat32Array()
-	var out := PackedFloat32Array()
-	out.resize(count)
-	out.fill(1.0)
-	return out
-
 
 static func _midi_of(value: Dictionary) -> float:
 	if value.has("freq"):
@@ -259,20 +218,8 @@ static func _midi_of(value: Dictionary) -> float:
 		if n is String or n is StringName:
 			return float(StrudelUtil.note_to_midi(String(n)))
 		return float(n)
-	# 🔴 СОБЫТИЕ БЕЗ НОТЫ ЗВУЧИТ ОТ C2 (midi 36), А НЕ ОТ C4.
-	#
-	# `n` без ноты — это индекс сэмпла, а не высота, и высоту тогда задаёт
-	# умолчание. В оригинале оно 36 сразу в двух местах:
-	# `getFrequencyFromValue(value, defaultNote = 36)` (superdough/helpers.mjs)
-	# для синтеза и `valueToMidi(hapValue, 36)` (superdough/util.mjs) для
-	# выбора сэмпла. Здесь стояло 60 — и `s("sawtooth")` без ноты звучал
-	# 261.47 Гц вместо 65.41, ровно НА ДВЕ ОКТАВЫ выше эталона, а в
-	# многосэмплированном банке бралась не та запись.
-	#
-	# Почему сверки проспали: в `tools/judge/effects.json` все сорок один узел
-	# записаны как `note("c3").s(…)` — выражения БЕЗ ноты не было ни одного, а
-	# событие при этом верное, поэтому и сверка событий молчала.
-	return 36.0
+	# `n` без ноты — это индекс сэмпла, а не высота: высота тогда средняя.
+	return 60.0
 
 
 static func _num(value: Dictionary, key: String, fallback: float) -> float:

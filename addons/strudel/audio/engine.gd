@@ -28,6 +28,8 @@ var pattern: StrudelPattern = null
 var bank: StrudelSampleBank = null
 ## Саундфонт для голосов вида `sf:<банк>:<программа>`.
 var soundfont: StrudelSoundFont = null
+## Пресеты webaudiofont для голосов `gm_*` (`@strudel/soundfonts`).
+var gm_fonts: StrudelGMFonts = null
 
 ## Сколько раз пришлось вытеснять голос — видно в отладке, а не «молча».
 var stolen_voices := 0
@@ -102,19 +104,6 @@ func setup(rate: float) -> void:
 func reset_clock() -> void:
 	_q_invalidate()
 	_q_join()
-	# 🔴 ХВОСТЫ ОРБИТ ТОЖЕ СБРАСЫВАЮТСЯ. Голоса глушились, а в орбитах
-	# оставались до двух секунд записанного эха и звенящие гребёнки зала —
-	# и они звучали уже в СЛЕДУЮЩЕМ треке: линия задержки читалась ровно с
-	# того места, где её бросили, и подмешивалась в выход независимо от того,
-	# посылает ли туда что-нибудь новый паттерн.
-	for key in _orbits:
-		var orb: Dictionary = _orbits[key]
-		var line: PackedFloat32Array = orb["line"]
-		line.fill(0.0)
-		orb["head"] = 0
-		var rev = orb.get("reverb")
-		if rev != null and rev.has_method("setup"):
-			rev.setup(mix_rate)
 	clipped_frames = 0
 	_frames_written = 0
 	_scheduled.clear()
@@ -198,18 +187,6 @@ var _q_c0 := 0.0
 var _q_c1 := 0.0
 var _q_gen_done := -1
 var _q_out: Array = []
-
-
-static func _soft_limit(x: float) -> float:
-	## Мягкое ограничение: за единицей кривая ложится к пределу, а не
-	## обрубается. Единица переходит в единицу, знак сохраняется.
-	if absf(x) <= 1.0:
-		return x
-	var a := absf(x)
-	# 1 + (a-1)/(a) сжимает хвост: при a=1 даёт 1, при большом a → 2, но
-	# делённое на 2 приводит предел обратно к единице.
-	var y := (2.0 * a - 1.0) / a
-	return signf(x) * (0.5 + 0.5 * y)
 
 
 func _query_block(pat: StrudelPattern, c0: float, c1: float) -> Array:
@@ -393,16 +370,9 @@ func _render(count: int) -> void:
 		if absf(l) > 1.0 or absf(r) > 1.0:
 			clipped_frames += 1
 			if master_limiter:
-				# 🔴 ФОРМУЛА СОКРАЩАЛАСЬ ДО ЖЁСТКОГО СРЕЗА.
-				# `l / (1 + |l| - 1)` — это `l / |l|`, то есть ровно ±1.0 для
-				# любого отсчёта за пределом: проверено, и при l = 3.0, и при
-				# l = 1.2 выходило 1.0000. Волна превращалась в меандр — тот
-				# самый хруст, ради избавления от которого лимитер и включают.
-				# Берём настоящее мягкое ограничение: `x / (1 + |x|)`,
-				# приведённое так, чтобы единица оставалась единицей и излом
-				# в точке перехода не был слышен.
-				_left[i] = _soft_limit(l)
-				_right[i] = _soft_limit(r)
+				# Мягкое ограничение: тише, но без хруста.
+				_left[i] = l / (1.0 + absf(l) - 1.0) if absf(l) > 1.0 else l
+				_right[i] = r / (1.0 + absf(r) - 1.0) if absf(r) > 1.0 else r
 
 
 func _mix_delay(orb: Dictionary, count: int) -> void:
@@ -432,7 +402,7 @@ func _trigger(value: Variant, length: float, offset_in_buffer: int, count: int) 
 	var voice := _take_voice()
 	if voice == null:
 		return
-	StrudelVoiceBuilder.configure(voice, value, length, bank, mix_rate, soundfont, cps)
+	StrudelVoiceBuilder.configure(voice, value, length, bank, mix_rate, soundfont, gm_fonts, cps)
 	# Настройки эха и зала берёт ПОСЛЕДНЕЕ пришедшее на орбиту событие —
 	# так же, как узлы в Strudel переиспользуются на орбиту.
 	var dict: Dictionary = value
