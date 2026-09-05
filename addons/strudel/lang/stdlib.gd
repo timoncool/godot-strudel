@@ -29,8 +29,12 @@ const BARE_METHODS := ["rev", "revv", "press", "palindrome", "brak", "hurry",
 ## Показ и отладка — на звук не влияют, но встречаются в чужом коде сплошь и
 ## рядом. Их надо ПРОПУСКАТЬ, а не падать на них.
 const PASSTHROUGH := ["_punchcard", "punchcard", "_pianoroll",
-	"pianoroll", "_spiral", "log", "logValues",
-	"onTrigger", "tag", "_pitchwheel", "markcss"]
+	"pianoroll", "_spiral", "spiral", "log", "logValues",
+	"onTrigger", "tag", "_pitchwheel", "pitchwheel", "markcss",
+	# 🔴 `_spectrum` тут не было, и ЛЮБОЙ трек с ней не запускался вовсе:
+	# «не знаю метода». Показывалки своей картинки у плагина нет, но падать
+	# на них нельзя — в чужих треках они стоят сплошь и рядом.
+	"_spectrum", "spectrum"]
 
 ## Осциллоскоп. Своей картинки у плагина нет, но пометку он ставит ТУ ЖЕ, что
 ## Булка (`analyze: 1`), — иначе значения событий расходятся с эталоном на
@@ -171,6 +175,15 @@ static func global_call(rt, name: String, args: Array) -> Variant:
 		# тональные
 		"chord", "voicing", "mode", "scale", "rootNotes", "transpose", "arp", "arpWith", "note", "n":
 			return _tonal_or_control(rt, name, args)
+		"morph":
+			# 🔴 В оригинале `morph(frompat, topat, bypat)` —
+			# ВЕРХНЕУРОВНЕВАЯ функция трёх паттернов (`pattern.mjs:3860`), а не
+			# метод. Записанная только в словарь методов, она давала «код не
+			# дал ни одного паттерна» на любом треке, где её звали сверху.
+			if args.size() < 3:
+				return {"__unknown": true}
+			return StrudelPattern.morph_pats(
+				_pat(args[0]), _pat(args[1]), _pat(args[2]))
 		"randL": return StrudelSignal.rand_list(_arg(args, 0))
 		"zip", "s_zip": return StrudelStepwise.zip(_flat(args))
 		"tour", "s_tour":
@@ -221,7 +234,18 @@ static func _tonal_or_control(rt, name: String, args: Array) -> Variant:
 			return StrudelTonal.chord(_pat(args[0]))
 		"scale":
 			return StrudelTonal.scale(_pat(args[0]), _arg(args, 1))
-	# voicing/mode/rootNotes/transpose/arp имеют смысл только на паттерне
+	# 🔴 ЭТИ ИМЕНА РАБОТАЮТ И СВЕРХУ, а не только методом.
+	#
+	# `register` в оригинале (`pattern.mjs:1744`) делает обе формы сразу:
+	# `pat.f(a)` и `f(a, pat)`, причём ПАТТЕРН ИДЁТ ПОСЛЕДНИМ доводом
+	# (`const pat = args[args.length - 1]`). Раньше тут стояло «имеют смысл
+	# только на паттерне», и `voicing(chord("<C^7>"))` роняло весь трек
+	# сообщением «не знаю функции».
+	if not args.is_empty():
+		var tail: Variant = args[args.size() - 1]
+		var pat := _pat(tail)
+		if pat != null:
+			return method_call(rt, pat, name, args.slice(0, args.size() - 1))
 	return {"__unknown": true}
 
 

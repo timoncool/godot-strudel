@@ -728,6 +728,23 @@ func q(_id: Variant = null) -> StrudelPattern:
 	return StrudelPattern.silence()
 
 
+static func morph_pats(from_pat: StrudelPattern, to_pat: StrudelPattern,
+		by_pat: StrudelPattern) -> StrudelPattern:
+	## Верхнеуровневый `morph` из оригинала (`pattern.mjs:3860`): три ПАТТЕРНА,
+	## а не три готовых значения. Значения достаются тройной внутренней
+	## привязкой, ровно как там:
+	##   frompat.innerBind(from => topat.innerBind(to => bypat.innerBind(
+	##       by => _morph(from, to, by))))
+	if from_pat == null or to_pat == null or by_pat == null:
+		return StrudelPattern.silence()
+	return from_pat.inner_bind(func(from_v: Variant) -> StrudelPattern:
+		return to_pat.inner_bind(func(to_v: Variant) -> StrudelPattern:
+			return by_pat.inner_bind(func(by_v: Variant) -> StrudelPattern:
+				var fl: Array = from_v if from_v is Array else [from_v]
+				var tl: Array = to_v if to_v is Array else [to_v]
+				return StrudelPattern.morph(fl, tl, by_v))))
+
+
 static func morph(from_list: Array, to_list: Array, by: Variant) -> StrudelPattern:
 	## Перетекание одного рисунка в другой: доли ползут со своих мест на
 	## чужие. Доля `by` — от нуля (первый рисунок) до единицы (второй).

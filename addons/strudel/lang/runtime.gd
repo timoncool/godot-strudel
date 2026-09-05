@@ -47,7 +47,15 @@ func execute(source: String) -> Dictionary:
 				var label := String(st.get("label", ""))
 				if label != "":
 					had_label = true
-					if value is StrudelPattern:
+					# 🔴 МЕТКА, НАЧАТАЯ ИЛИ ЗАКОНЧЕННАЯ ПОДЧЁРКИВАНИЕМ, ГЛУШИТ
+					# СТРОКУ. Так глушат партию, не удаляя её: `_$:` и `x_:`.
+					# Правило дословно из оригинала, `core/repl.mjs:353`:
+					# `if (id.startsWith('_') || id.endsWith('_')) return silence`.
+					# Раньше глухая строка звучала наравне с остальными —
+					# замерено: `_$: s("bd*4")` вместе с `$: s("hh*8")` давали
+					# 24 события за два круга вместо 16.
+					var muted := label.begins_with("_") or label.ends_with("_")
+					if value is StrudelPattern and not muted:
 						outputs.append(value)
 				else:
 					last = value
@@ -61,6 +69,11 @@ func execute(source: String) -> Dictionary:
 		outputs.append(last)
 
 	if outputs.is_empty():
+		# 🔴 ЕСЛИ ВСЕ СТРОКИ ЗАГЛУШЕНЫ — ЭТО ТИШИНА, А НЕ ОШИБКА. Метка,
+		# начатая или закончённая подчёркиванием, глушит строку (`repl.mjs:353`),
+		# и код, где заглушено всё, в оригинале просто молчит.
+		if had_label:
+			return {"ok": true, "pattern": StrudelPattern.silence(), "cps": cps}
 		return {"ok": false, "error": "код не дал ни одного паттерна"}
 
 	var pattern: StrudelPattern = outputs[0] if outputs.size() == 1 else StrudelPattern.stack(outputs)
@@ -130,7 +143,15 @@ func _eval(node: Variant, locals: Dictionary = {}) -> Variant:
 			for part in n["parts"]:
 				var piece: Variant = _eval(part, locals)
 				text += StrudelUtil.text(piece)
-			return StrudelMini.mini(text)
+			# 🔴 ОШИБКУ РАЗБОРА НЕ ПРОГЛАТЫВАТЬ — так же, как у обычной строки
+			# выше. `StrudelMini.mini` при поломке лишь пишет в лог движка и
+			# отдаёт тишину: запуск считался УСПЕШНЫМ, а паттерн выходил
+			# пустым. Замерено на `s(`bd*${n} [[[`)`: ok, ноль событий.
+			var tpl_try := StrudelMini.try_mini(text)
+			if not tpl_try.get("ok", false):
+				return _fail("в шаблонной строке \"%s\": %s (позиция %d)"
+					% [text, tpl_try.get("error", "?"), tpl_try.get("pos", -1)])
+			return tpl_try["pattern"]
 		"bin":
 			return _binary(String(n["op"]), _eval(n["l"], locals), _eval(n["r"], locals))
 		"member":
