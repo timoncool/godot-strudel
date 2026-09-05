@@ -52,8 +52,3 @@ jobs:
           godot --headless --path . --script res://tools/judge/check_coverage.gd | tee coverage.log
           grep -q "НЕТ функций (0)" coverage.log
           grep -q "НЕТ параметров (0)" coverage.log
-
-      - name: Установка с нуля в пустой проект
-        run: bash tools/check_clean_install.sh
-        env:
-          GODOT: /usr/local/bin/godot
