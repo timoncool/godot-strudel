@@ -128,6 +128,7 @@ music.set_pattern(beat)
 | `examples/03_game_reacts` | Картинка игры, ведомая событиями паттерна |
 | `examples/04_full_track` | Целый трек из шестнадцати секций, перенесённый без правок |
 | `examples/05_community_tunes` | Тридцать два трека сообщества из коллекции Strudel — переключаются пробелом |
+| `examples/07_repl` | Плеер живого кода: вставил код Strudel — слышно его и видно события с осциллографом |
 
 ## Другие проекты [@timoncool](https://github.com/timoncool)
 
