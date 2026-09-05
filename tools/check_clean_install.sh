@@ -16,7 +16,21 @@ GODOT="${GODOT:-/d/Programs/Godot/Godot_v4.7.1-stable_win64_console.exe}"
 # ноль файлов. Локально это не всплывало никогда.
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="${TMPDIR:-/tmp}/strudel_clean_$$"
-WIN_TMP=$(cygpath -w "$TMP" 2>/dev/null | sed 's|\\|/|g' || echo "$TMP")
+# 🔴 ЗАПАСНОЙ ВАРИАНТ ПОСЛЕ КОНВЕЙЕРА НЕ СРАБАТЫВАЕТ. Здесь стояло
+# `cygpath … | sed … || echo "$TMP"`, но код возврата у конвейера — от
+# ПОСЛЕДНЕЙ команды: на линуксовом раннере `cygpath` нет, `sed` спокойно
+# отрабатывает на пустом входе и отдаёт ноль, `||` не срабатывает — и путь
+# выходил ПУСТОЙ. Godot отвечал `Invalid project path specified: ""`, шаг CI
+# падал, а в логе об этом не было ни слова. Проверяем наличие команды явно.
+if command -v cygpath >/dev/null 2>&1; then
+  WIN_TMP=$(cygpath -w "$TMP" | sed 's|\\|/|g')
+else
+  WIN_TMP="$TMP"
+fi
+if [ -z "$WIN_TMP" ]; then
+  echo "[чисто] путь к проекту пуст — дальше идти некуда"
+  exit 1
+fi
 
 echo "[чисто] пустой проект: $TMP"
 rm -rf "$TMP"
