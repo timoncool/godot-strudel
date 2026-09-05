@@ -87,10 +87,22 @@ fi
 
 "$GODOT" --headless --path "$WIN_TMP" --script res://scene/main.gd > "$TMP/run.log" 2>&1
 code_run=$?
-grep -E "^\[чисто\]" "$TMP/run.log"
+grep -E "^\[чисто\]" "$TMP/run.log" || true
 if grep -q "SCRIPT ERROR" "$TMP/run.log"; then
   echo "[чисто] ОШИБКИ ДВИЖКА:"
   grep -A3 "SCRIPT ERROR" "$TMP/run.log" | head -20
+  exit 1
+fi
+# 🔴 МОЛЧАНИЕ — ТОЖЕ ПРОВАЛ, И ОНО ДОЛЖНО БЫТЬ ГОВОРЯЩИМ. Раньше проверка
+# держалась на кодах возврата grep: не нашлось ни одной строки — шаг падал, а
+# в логе оставались только «размер поставки» и `exit code 1`, по которым
+# причину не установить. Теперь печатается хвост запуска.
+if ! grep -q "ОК — плагин работает" "$TMP/run.log"; then
+  echo "[чисто] ПРОВАЛ: проверка не отчиталась (код запуска $code_run)."
+  echo "[чисто] последние строки запуска:"
+  tail -30 "$TMP/run.log"
+  echo "[чисто] последние строки импорта:"
+  tail -10 "$TMP/import.log"
   exit 1
 fi
 
