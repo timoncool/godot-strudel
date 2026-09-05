@@ -24,6 +24,11 @@ const TUNES_DIR := "res://examples/05_community_tunes/tunes"
 ## на папку, ровно как `samples()` в браузере.
 const PACKS := ["res://examples/02_own_samples"]
 
+## Папки, которых в поставке нет, но если они у тебя лежат — подхватим.
+## Так плеер играет чужие треки настоящими инструментами: имена вроде
+## `piano1`, `harp`, `vibraphone` живут в банке VCSL, а не в примере.
+const EXTRA_PACKS := ["res://tools/judge/vcslbank"]
+
 ## Сколько отсчётов волны держим для рисования.
 const SCOPE_FRAMES := 2048
 ## Сколько живёт метка на ленте.
@@ -126,7 +131,47 @@ func _load_packs() -> StrudelSampleBank:
 	var bank := StrudelSampleBank.new()
 	for path in PACKS:
 		bank.load_folder(ProjectSettings.globalize_path(path))
+	for path in EXTRA_PACKS:
+		if DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(path)):
+			bank.load_folder(ProjectSettings.globalize_path(path))
 	return bank
+
+
+func _missing_voices(code: String) -> PackedStringArray:
+	## Каких инструментов трек просит, а в банке их нет.
+	##
+	## 🔴 БЕЗ ЭТОГО «НЕ ИГРАЕТ» ВЫГЛЯДИТ КАК ПОЛОМКА ПЛЕЕРА. Чужой трек зовёт
+	## `piano1`, `harp`, `vibraphone`; если банка с ними нет, событий полно, а
+	## звука ноль — и понять, что дело в сэмплах, снаружи нечем.
+	var out: PackedStringArray = []
+	var run: Dictionary = StrudelRuntime.run(code)
+	if not run.get("ok", false):
+		return out
+	var bank := music.get_bank()
+	var seen := {}
+	for hap in (run["pattern"] as StrudelPattern).query_arc(0.0, 8.0):
+		if not hap.value is Dictionary:
+			continue
+		var name := String((hap.value as Dictionary).get("s", ""))
+		if name == "" or seen.has(name):
+			continue
+		seen[name] = true
+		# Синтез сэмплов не просит: список берётся у самого плагина, чтобы он
+		# не разъехался с ним при добавлении новой волны.
+		if StrudelVoiceBuilder.SYNTHS.has(name):
+			continue
+		# `gm_*` живут не в банке, а в пресетах webaudiofont. Strudel тянет их
+		# из сети, а плагину сеть запрещена: пресеты кладутся на диск заранее и
+		# указываются `gm_fonts_path`. Пока путь пуст, эти голоса молчат — и об
+		# этом надо сказать, иначе трек звучит наполовину без объяснений.
+		if name.begins_with("gm_"):
+			if music.gm_fonts_path == "":
+				out.append(name)
+			continue
+		if bank == null or not bank.entries.has(name):
+			out.append(name)
+	out.sort()
+	return out
 
 
 func _list_tunes() -> PackedStringArray:
@@ -271,8 +316,11 @@ func _toggle() -> void:
 func _start() -> void:
 	_error = ""
 	_marks.clear()
+	var missing := _missing_voices(_code.text)
 	if music.play(_code.text):
 		_play.text = "■  стоп"
+		if not missing.is_empty():
+			_error = "нет в банке: " + ", ".join(missing)
 	else:
 		# Разбор не удался — ошибка приходит и сигналом, и через `last_error`.
 		# Пустой текст ошибки тоже показываем: молчащая кнопка без объяснения
@@ -353,12 +401,19 @@ func _read_output() -> void:
 
 
 func _update_status() -> void:
+	var s := music.stats()
+	# Темп в поле — тот, что стоит СЕЙЧАС: трек мог задать свой через `setcpm`,
+	# и он сильнее значения в поле. Обновляется ДО ветки с предупреждением:
+	# иначе при любой жалобе поле показывает старое число.
+	var cpm := float(s.get("циклов_в_секунду", 0.0)) * 60.0
+	if cpm > 0.0 and absf(cpm - _cpm.value) > 0.01:
+		_cpm.set_value_no_signal(cpm)
 	if _error != "":
-		_status.text = "⚠  " + _error
+		_status.text = "⚠  %s · цикл %.2f · голосов %d" % [
+			_error, float(s.get("цикл", 0.0)), int(s.get("голосов_звучит", 0))]
 		_status.add_theme_color_override("font_color", Color(0.95, 0.45, 0.4))
 		return
 	_status.add_theme_color_override("font_color", DIM)
-	var s := music.stats()
 	_status.text = "цикл %.2f · голосов %d из %d · событий %d · сэмплов в банке %d" % [
 		float(s.get("цикл", 0.0)),
 		int(s.get("голосов_звучит", 0)),
