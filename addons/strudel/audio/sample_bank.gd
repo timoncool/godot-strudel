@@ -215,10 +215,19 @@ var _prime_stop := false
 var _mutex := Mutex.new()
 
 
-func prime_async() -> void:
-	## Разобрать все файлы банка наперёд, не задерживая старт.
+var _prime_only: PackedStringArray = []
+
+
+func prime_async(names: PackedStringArray = []) -> void:
+	## Разобрать файлы наперёд, не задерживая старт.
+	##
+	## 🔴 СПИСОК ИМЁН ОБЯЗАТЕЛЕН, КОГДА БАНК БОЛЬШОЙ. Банк игры — 267 наборов и
+	## тысячи файлов на несколько гигабайт; прогревать его целиком ради трека,
+	## которому нужен один рояль, значит молотить диск всю партию. Пустой
+	## список означает «весь банк» и годится только для маленьких паков.
 	if _prime_thread != null:
 		return
+	_prime_only = names
 	_prime_stop = false
 	_prime_thread = Thread.new()
 	_prime_thread.start(_prime_loop)
@@ -233,9 +242,12 @@ func prime_stop() -> void:
 
 
 func _prime_loop() -> void:
-	for key in entries.keys():
-		if _prime_stop:
-			return
+	var keys: Array = Array(_prime_only) if not _prime_only.is_empty() else entries.keys()
+	for key in keys:
+		if _prime_stop or not entries.has(key):
+			if _prime_stop:
+				return
+			continue
 		var entry: Dictionary = entries[key]
 		for path in (entry.get("pitched", {}) as Dictionary).values():
 			if _prime_stop:
@@ -261,6 +273,30 @@ func rate_of(path: String) -> float:
 	return float(_rates.get(path, 44100.0))
 
 
+func _pcm_resource(path: String) -> PackedFloat32Array:
+	## Отсчёты из импортированного ресурса. Путь к файлу приводим к `res://`:
+	## банк игры отдаёт абсолютные пути, а движок знает свои.
+	var res := path
+	if not res.begins_with("res://"):
+		var base := ProjectSettings.globalize_path("res://")
+		if not path.begins_with(base):
+			return PackedFloat32Array()
+		res = "res://" + path.substr(base.length()).replace("\\", "/")
+	if not ResourceLoader.exists(res):
+		return PackedFloat32Array()
+	var stream := load(res)
+	if stream == null or not (stream is AudioStream):
+		return PackedFloat32Array()
+	var out := _decode_stream(stream)
+	if out.is_empty():
+		return out
+	_mutex.lock()
+	_cache[path] = out
+	_rates[path] = float(AudioServer.get_mix_rate())
+	_mutex.unlock()
+	return out
+
+
 func _pcm(path: String) -> PackedFloat32Array:
 	# Кэш общий для потока прогрева и для счёта звука — читаем и пишем под
 	# замком, иначе словарь правится из двух потоков разом.
@@ -282,8 +318,18 @@ func _pcm(path: String) -> PackedFloat32Array:
 		# тише пика на полсотни децибел, уходит в ступеньку квантования.
 		# Замерено сверкой с Булкой: у ноты пропадала основная частота —
 		# 22 дБ разницы там, где остальной спектр сходился до децибела.
-		# Сначала пробует движок: он разбирает тот же файл в тринадцать раз
-		# быстрее нашего цикла. Свой разбор остаётся запасным.
+		# 🔴 СНАЧАЛА — ИМПОРТИРОВАННЫЙ РЕСУРС ДВИЖКА, а не файл с диска.
+		#
+		# Godot разобрал сэмплы при импорте, держит их в своём кэше и умеет
+		# отдавать отсчёты сам: `load()` + проигрывание через `mix_audio`.
+		# Замер на банке игры: движком 28 мс, чтением файла 64 мс — вдвое
+		# дешевле, и это тот же тракт, которым звук берёт сама игра.
+		# Важнее скорости другое: в собранной игре исходных `.wav` нет вовсе,
+		# едут только импортированные ресурсы, — читать файл там было бы
+		# нечего.
+		var from_res := _pcm_resource(path)
+		if not from_res.is_empty():
+			return from_res
 		var wav := AudioStreamWAV.load_from_file(path)
 		if wav != null:
 			var out := _decode_wav(wav)

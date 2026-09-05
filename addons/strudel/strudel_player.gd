@@ -181,6 +181,16 @@ func _voices_in_code() -> PackedStringArray:
 	return out
 
 
+func _exit_tree() -> void:
+	# 🔴 ПОТОК ПРОГРЕВА ГАСИТСЯ ПРИ ВЫХОДЕ. Он стартует вместе с музыкой, но
+	# при закрытии игры `stop()` зовут не всегда — движок тогда ругается
+	# `~Thread` и роняет утечку объектов на выходе.
+	if _engine != null and _engine.bank != null and _engine.bank.has_method("prime_stop"):
+		_engine.bank.prime_stop()
+	if _engine != null:
+		_engine.shutdown()
+
+
 func restart_clock() -> void:
 	## Начать с начала формы. Нужно, когда несколько плееров ведут один трек
 	## разными партиями: собираются они по очереди, а идти обязаны вместе.
@@ -195,6 +205,7 @@ func stop() -> void:
 	if _player != null:
 		_player.stop()
 	if _engine != null:
+		_engine.shutdown()
 		_engine.reset_clock()
 
 

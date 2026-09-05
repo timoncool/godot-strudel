@@ -100,6 +100,8 @@ func setup(rate: float) -> void:
 
 
 func reset_clock() -> void:
+	_q_invalidate()
+	_q_join()
 	clipped_frames = 0
 	_frames_written = 0
 	_scheduled.clear()
@@ -122,6 +124,7 @@ func set_cps(new_cps: float) -> void:
 	_anchor_frame = _frames_written
 	cps = new_cps
 	# Всё, что было запланировано вперёд по старому темпу, пересчитываем.
+	_q_invalidate()
 	_scheduled.clear()
 	_sched_cycle_end = _anchor_cycle
 	_sched_frame_end = _frames_written
@@ -130,6 +133,7 @@ func set_cps(new_cps: float) -> void:
 func set_pattern(new_pattern: StrudelPattern) -> void:
 	## Живая замена: уже звучащие голоса доигрывают, такт не сбрасывается.
 	pattern = new_pattern
+	_q_invalidate()
 	_scheduled.clear()
 	_sched_cycle_end = cycle_at_frame(_frames_written)
 	_sched_frame_end = _frames_written
@@ -152,6 +156,99 @@ func current_cycle() -> float:
 # ═══════════════════════════════════════════════════════════════════════════
 
 const _BLOCK_CYCLES := 0.5
+## Блок, который считается НА МЕСТЕ, когда впрок ничего нет: после смены
+## паттерна или темпа. Цена опроса растёт с длиной блока, и полцикла на
+## главном потоке — это и был фриз (замерено 25–48 мс). Восьмушка цикла
+## укладывается в кадр, а дальше блоки снова считает рабочий поток.
+const _FIRST_BLOCK_CYCLES := 0.125
+
+## ── ОПРОС ПАТТЕРНА В ФОНЕ ──────────────────────────────────────────────────
+##
+## 🔴 Опрос блока на полцикла вперёд стоил 30–50 мс НА ГЛАВНОМ ПОТОКЕ каждые
+## полтора такта. Замер на целом треке: 31 пик за 45 с — ровно по числу
+## полуциклов при 84 BPM; сведение при одном-четырёх голосах укладывалось в
+## единицы миллисекунд. Дорог сам `query_arc` в GDScript: дроби, объекты
+## событий, вложенные `arrange`/`stack`. На слух это микрофризы игры.
+##
+## Теперь блок считает рабочий поток, пока предыдущий звучит, а главный
+## только забирает готовое. Опрос идёт ОДИН за раз: у паттернов есть
+## статическое состояние (`_timelines`, `_last_voicing` в раскладках), и два
+## одновременных опроса дрались бы за него — поэтому главный поток не
+## опрашивает сам, пока жив рабочий, а ждёт его.
+##
+## Смена паттерна или темпа поднимает поколение: блок, посчитанный по
+## старому, выбрасывается, и первый блок нового считается на месте.
+var _q_task := -1
+var _q_gen := 0
+var _q_mutex := Mutex.new()
+var _q_c0 := 0.0
+var _q_c1 := 0.0
+var _q_gen_done := -1
+var _q_out: Array = []
+
+
+func _query_block(pat: StrudelPattern, c0: float, c1: float) -> Array:
+	## События с началом внутри [c0, c1): начало в циклах, длина в циклах.
+	var out: Array = []
+	for hap in pat.query_arc(c0, c1):
+		if not hap.has_onset():
+			continue
+		var begin: float = hap.whole.begin.to_float()
+		if begin < c0 or begin >= c1:
+			continue
+		out.append({"begin": begin, "value": hap.value,
+			"dur": hap.duration().to_float()})
+	return out
+
+
+func _q_worker(pat: StrudelPattern, c0: float, c1: float, gen: int) -> void:
+	var res := _query_block(pat, c0, c1)
+	_q_mutex.lock()
+	if gen == _q_gen:
+		_q_out = res
+		_q_c0 = c0
+		_q_c1 = c1
+		_q_gen_done = gen
+	_q_mutex.unlock()
+
+
+func _q_join() -> void:
+	## Дождаться рабочего, если он ещё считает.
+	if _q_task >= 0:
+		WorkerThreadPool.wait_for_task_completion(_q_task)
+		_q_task = -1
+
+
+func shutdown() -> void:
+	## Погасить рабочий поток. 🔴 Без этого игра падала на выходе: движок
+	## освобождался, а задача опроса ещё считала по его паттерну.
+	_q_invalidate()
+	_q_join()
+
+
+func _q_invalidate() -> void:
+	## Паттерн или темп сменились: посчитанное впрок больше не годится.
+	_q_gen += 1
+
+
+func _q_request(c0: float, c1: float) -> void:
+	if _q_task >= 0 or pattern == null:
+		return
+	_q_task = WorkerThreadPool.add_task(_q_worker.bind(pattern, c0, c1, _q_gen),
+		false, "Strudel: опрос паттерна")
+
+
+func _q_take(c0: float, c1: float) -> Variant:
+	## Готовый блок ровно на [c0, c1) нынешнего поколения, иначе null.
+	if _q_task < 0:
+		return null
+	_q_join()
+	_q_mutex.lock()
+	var ok := _q_gen_done == _q_gen and is_equal_approx(_q_c0, c0) \
+		and is_equal_approx(_q_c1, c1)
+	var res: Array = _q_out if ok else []
+	_q_mutex.unlock()
+	return res if ok else null
 
 
 func _ensure_scheduled(until_frame: int) -> void:
@@ -162,20 +259,28 @@ func _ensure_scheduled(until_frame: int) -> void:
 		guard += 1
 		var c0 := _sched_cycle_end
 		var c1 := c0 + _BLOCK_CYCLES
-		for hap in pattern.query_arc(c0, c1):
-			if not hap.has_onset():
-				continue
-			var begin: float = hap.whole.begin.to_float()
-			if begin < c0 or begin >= c1:
-				continue
+		var got: Variant = _q_take(c0, c1)
+		var haps: Array
+		if got != null:
+			haps = got
+		else:
+			# Впрок ничего нет (первый блок, или паттерн только что сменился):
+			# считаем на месте, но КОРОТКИЙ кусок — он влезает в кадр. Рабочий
+			# к этому моменту уже остановлен: опрос не ведётся вдвоём.
+			_q_join()
+			c1 = c0 + _FIRST_BLOCK_CYCLES
+			haps = _query_block(pattern, c0, c1)
+		for h in haps:
 			_scheduled.append({
-				"frame": frame_at_cycle(begin),
-				"value": hap.value,
-				"length": hap.duration().to_float() / cps,
+				"frame": frame_at_cycle(float(h["begin"])),
+				"value": h["value"],
+				"length": float(h["dur"]) / cps,
 			})
 		_sched_cycle_end = c1
 		_sched_frame_end = frame_at_cycle(c1)
 	_scheduled.sort_custom(func(a, b): return int(a["frame"]) < int(b["frame"]))
+	# Следующий блок — в фон, пока этот звучит.
+	_q_request(_sched_cycle_end, _sched_cycle_end + _BLOCK_CYCLES)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
