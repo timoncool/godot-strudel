@@ -337,7 +337,17 @@ static func wchoose_with(pat: StrudelPattern, pairs: Array) -> StrudelPattern:
 	for pair in pairs:
 		var p: Array = pair if pair is Array else [pair, 1]
 		values.append(StrudelPattern.reify(p[0]))
-		total += StrudelPattern._num(p[1]) if p.size() > 1 else 1.0
+		# 🔴 НЕЧИСЛОВОЙ ВЕС НЕ ДОЛЖЕН ОТРАВЛЯТЬ ВЕСЬ ИТОГ. Вес бывает
+		# паттерном — так написан пример в самой справке Strudel:
+		# `wchooseCycles(["bd(3,8)", "<5 0>"], …)`. `_num` отдавал на нём
+		# NAN, нарастающий итог становился NAN целиком, и сравнение
+		# `totals[i] > find` было ложным для ВСЕХ участков, включая ещё
+		# конечные, — выбор молча садился на последний вариант навсегда.
+		# Непонятный вес считаем единицей, как и отсутствующий.
+		var w := StrudelPattern._num(p[1]) if p.size() > 1 else 1.0
+		if is_nan(w) or is_inf(w):
+			w = 1.0
+		total += w
 		totals.append(total)
 	if values.is_empty():
 		return StrudelPattern.silence()
@@ -435,9 +445,17 @@ static func degrade_by(pat: StrudelPattern, amount: Variant) -> StrudelPattern:
 	## по четвертям круга; пока здесь стояло `float(amount)`, строка «0 0.1
 	## .5 .1» превращалась в ноль, и не выбрасывалось ничего. На треке
 	## amensister это давало лишние двадцать четыре события.
-	return pat._patternify([amount], func(vals: Array) -> StrudelPattern:
+	# 🔴 ЧИСЛО ШАГОВ ПЕРЕЖИВАЕТ ПРОРЕЖИВАНИЕ. `degradeBy` ничего не делает с
+	# долями, только выбрасывает события, поэтому в оригинале у результата
+	# `_steps` остаётся прежним. Здесь при доле-ПАТТЕРНЕ шаги терялись
+	# (`_patternify` идёт через склейку), и дальше `stepcat` подставлял
+	# вместо «не задано» единицу: `stepcat(s("hh*8").degradeBy("<0 .5>"),
+	# s("bd"))` делил круг 1:1 вместо 8:1.
+	var out := pat._patternify([amount], func(vals: Array) -> StrudelPattern:
 		return _degrade_with(pat, rand(), StrudelPattern._num(vals[0]))
 	)
+	out.steps = pat.steps
+	return out
 
 
 static func degrade(pat: StrudelPattern) -> StrudelPattern:

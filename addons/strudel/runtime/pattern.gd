@@ -1348,13 +1348,22 @@ func swing(subdivision: Variant) -> StrudelPattern:
 
 func every(n: Variant, fn: Callable) -> StrudelPattern:
 	## Применять действие каждый N-й цикл, начиная с первого.
-	var count := int(StrudelFraction.of(n).to_float())
-	if count <= 0:
-		return self
-	var list: Array = [fn.call(self)]
-	for i in count - 1:
-		list.append(self)
-	return StrudelPattern.slowcat_prime(list)
+	##
+	## 🔴 ЧИСЛО ЗДЕСЬ — ПАТТЕРН. В оригинале `register` патернифицирует все
+	## доводы, кроме самого паттерна, поэтому `every("<2 3>", rev)` меняет
+	## период по кругам. Раньше довод шёл прямо в `StrudelFraction.of`, для
+	## строки `"<2 3>"` тот печатал «не понимаю значение» и отдавал ноль,
+	## `count <= 0` возвращал паттерн как есть — разворота не было НИ РАЗУ.
+	var me := self
+	return _patternify([n], func(vals: Array) -> StrudelPattern:
+		var count := int(StrudelFraction.of(vals[0]).to_float())
+		if count <= 0:
+			return me
+		var list: Array = [fn.call(me)]
+		for i in count - 1:
+			list.append(me)
+		return StrudelPattern.slowcat_prime(list)
+	)
 
 
 func first_of(n: Variant, fn: Callable) -> StrudelPattern:
@@ -1974,7 +1983,8 @@ static func truthy(v: Variant) -> bool:
 # `struct` — это keepif.out, `mask` — keepif.in. Перепутать их местами значит
 # получить рисунок из другого паттерна.
 
-const _ALIGNMENTS := ["in", "out", "mix", "squeeze", "squeezeout", "reset", "restart", "poly"]
+const _ALIGNMENTS := ["in", "out", "mix", "squeeze", "squeezein", "squeezeout",
+	"reset", "restart", "poly"]
 
 
 static func _op_value(op_name: String, a: Variant, b: Variant) -> Variant:
@@ -2096,7 +2106,12 @@ func _apply_alignment(how: String, other: StrudelPattern, f: Callable) -> Strude
 			return fmap(func(a) -> Callable:
 				return func(b): return f.call(a, b)
 			).app_both(other)
-		"squeeze":
+		# 🔴 `squeezein` — ЭТО СИНОНИМ `squeeze`, и он был не разобран.
+		# Разборщик кода пропускает его вперёд (он есть в `ALIGNMENTS`), а
+		# здесь ветки не было: срабатывал `push_error` и `return self`, то
+		# есть `n("0 2").add.squeezein(…)` молча возвращал паттерн БЕЗ
+		# сложения — ни звука, ни ошибки для пользователя.
+		"squeeze", "squeezein":
 			return fmap(func(a) -> StrudelPattern:
 				return other.fmap(func(b): return f.call(a, b))
 			).squeeze_join()
