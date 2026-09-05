@@ -10,7 +10,11 @@
 set -u
 
 GODOT="${GODOT:-/d/Programs/Godot/Godot_v4.7.1-stable_win64_console.exe}"
-SRC="D:/Projects/TEMP/godot-strudel"
+# 🔴 КОРЕНЬ СЧИТАЕТСЯ ОТ СКРИПТА, А НЕ ЗАШИТ. Здесь стоял путь моей машины
+# (`D:/Projects/...`), и на линуксовом раннере CI шаг падал: `cp: cannot
+# stat` — плагин не копировался, проверка «размер поставки» показывала
+# ноль файлов. Локально это не всплывало никогда.
+SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="${TMPDIR:-/tmp}/strudel_clean_$$"
 WIN_TMP=$(cygpath -w "$TMP" 2>/dev/null | sed 's|\\|/|g' || echo "$TMP")
 
