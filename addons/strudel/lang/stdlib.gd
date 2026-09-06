@@ -212,6 +212,12 @@ static func global_call(rt, name: String, args: Array) -> Variant:
 		"initHydra", "hush", "all", "samples", "setDefaultJoin", "calculateSteps":
 			# Не влияет на события: тихо пропускаем, чтобы чужой код не падал.
 			return null
+		"osc", "noise", "voronoi", "shape", "gradient", "solid", "src", "render":
+			# 🔴 КАРТИНКА HYDRA. После `await initHydra()` в треках из Булки идёт
+			# цепочка `osc(2.4, 0.025).color(…).modulate(noise(2.1), 0.16).out()`.
+			# Сами имена пропускались, а вот `osc` роняло код «не знаю функции».
+			# Заглушка: словарь-метка, любой её метод возвращает её же.
+			return {"__hydra": true}
 
 	# Всё остальное — либо параметр, либо метод, взятый как функция.
 	if StrudelControls.is_control(name):

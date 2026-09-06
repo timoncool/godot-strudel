@@ -129,10 +129,19 @@ func _eval(node: Variant, locals: Dictionary = {}) -> Variant:
 			var params: Array = n["params"]
 			var body: Variant = n["body"]
 			var captured := locals.duplicate()
+			var defaults: Dictionary = n.get("defaults", {})
 			return func(args: Array) -> Variant:
 				var inner := captured.duplicate()
 				for i in params.size():
-					inner[String(params[i])] = args[i] if i < args.size() else null
+					var pname := String(params[i])
+					if i < args.size() and args[i] != null:
+						inner[pname] = args[i]
+					elif defaults.has(pname):
+						# как в JS: умолчание считается в момент вызова, в
+						# области видимости стрелки — предыдущие параметры видны
+						inner[pname] = _eval(defaults[pname], inner)
+					else:
+						inner[pname] = null
 				return _eval(body, inner)
 		"unary":
 			return _unary(String(n["op"]), _eval(n["arg"], locals))
@@ -285,6 +294,10 @@ func _call(node: Dictionary, locals: Dictionary) -> Variant:
 			return _method(target, name, args)
 
 		if target is Dictionary:
+			# Картинка Hydra (`osc(…).color(…).out()`): любой метод цепочки
+			# возвращает ту же заглушку — на события не влияет, код не падает.
+			if (target as Dictionary).get("__hydra", false):
+				return target
 			var f: Variant = (target as Dictionary).get(name)
 			if f is Callable:
 				return (f as Callable).call(args)

@@ -327,6 +327,8 @@ func _arrow_or_binary() -> Dictionary:
 		var body := _expression()
 		if error != "":
 			return {}
+		if params is Dictionary:
+			return {"t": "arrow", "params": params["names"], "defaults": params["defaults"], "body": body}
 		return {"t": "arrow", "params": params, "body": body}
 	_i = save
 	return _binary(0)
@@ -341,6 +343,10 @@ func _try_arrow_params() -> Variant:
 		var save := _i
 		_i += 1
 		var names: Array = []
+		# 🔴 ЗНАЧЕНИЯ ПО УМОЛЧАНИЮ: `(ch, pat = COMP) => …`. Без этого разбор
+		# падал «ожидал ")"» на первом же треке из Булки, где так задан
+		# рисунок компинга. Умолчания — узлы выражений, считаются при вызове.
+		var defaults: Dictionary = {}
 		if _is_p(")"):
 			_i += 1
 		else:
@@ -349,8 +355,17 @@ func _try_arrow_params() -> Variant:
 				if t.get("t", "") != "id":
 					_i = save
 					return null
-				names.append(String(t["v"]))
+				var pname := String(t["v"])
+				names.append(pname)
 				_i += 1
+				if _is_p("="):
+					_i += 1
+					var dflt := _expression()
+					if error != "":
+						error = ""
+						_i = save
+						return null
+					defaults[pname] = dflt
 				if _is_p(","):
 					_i += 1
 					continue
@@ -361,6 +376,8 @@ func _try_arrow_params() -> Variant:
 			_i += 1
 		if _is_p("=>"):
 			_i += 1
+			if not defaults.is_empty():
+				return {"names": names, "defaults": defaults}
 			return names
 		_i = save
 		return null
