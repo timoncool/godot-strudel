@@ -35,6 +35,12 @@ var sample_loop := false
 ## (`loopStart..loopEnd` у зоны), а не весь файл.
 var sample_loop_begin := 0.0
 var sample_loop_end := 0.0
+## Доли буфера, откуда и докуда играть: `begin`/`end` события (`chop`,
+## `striate`, `slice`, `splice`). 🔴 Уже терялись один раз (205480b).
+var sample_begin := 0.0
+var sample_end := 1.0
+## Докуда играть в отсчётах — считается в `start()` из `sample_end`.
+var _sample_stop := 0.0
 
 var frequency := 440.0
 var speed := 1.0
@@ -201,7 +207,9 @@ func start(mix_rate: float) -> void:
 	_rate = mix_rate
 	_pos = 0
 	_phase = 0.0
-	_sample_pos = 0.0
+	var last := float(maxi(sample.size() - 1, 0))
+	_sample_pos = clampf(sample_begin, 0.0, 1.0) * last
+	_sample_stop = clampf(sample_end, 0.0, 1.0) * last
 	_brown = 0.0
 	_pink = PackedFloat32Array()
 	_pink.resize(7)
@@ -357,7 +365,7 @@ func _render_simple(left: PackedFloat32Array, right: PackedFloat32Array,
 	var g := gain * postgain
 	var step := frequency * speed / rate
 	var sample_step := speed * (sample_rate / rate)
-	var sample_last := sample.size() - 1
+	var sample_last := mini(int(_sample_stop), sample.size() - 1)
 	# 🔴 ТИП СТАВИТСЯ РУКАМИ. Тернарник `A if cond else B` выводится в Variant,
 	# и тогда каждое обращение к массиву идёт медленным путём — через проверку
 	# типа на КАЖДЫЙ отсчёт. Здесь таких обращений четыре на отсчёт (две
@@ -580,7 +588,7 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 	var post := postgain
 	var freq_step := frequency * speed / rate
 	var sample_step := speed * (sample_rate / rate)
-	var sample_last := sample.size() - 1
+	var sample_last := mini(int(_sample_stop), sample.size() - 1)
 	var wave_lo := StrudelWavetable.table(_wave_kind, _wave_lo) if _wave_kind >= 0 \
 		else PackedFloat32Array()
 	var wave_hi := StrudelWavetable.table(_wave_kind, _wave_hi) if _wave_kind >= 0 \

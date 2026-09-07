@@ -217,7 +217,10 @@ var _q_out: Array = []
 func _query_block(pat: StrudelPattern, c0: float, c1: float) -> Array:
 	## События с началом внутри [c0, c1): начало в циклах, длина в циклах.
 	var out: Array = []
-	for hap in pat.query_arc(c0, c1):
+	# 🔴 ТЕМП ЕДЕТ В ЗАПРОС. `fit()`, `loopAt()` и прочие «уложить в круг»
+	# считают скорость из `state.controls._cps` (`pattern.mjs:3711`). Без него
+	# они брали умолчание, и брейк растягивался не в два круга, а как попало.
+	for hap in pat.query_arc(c0, c1, {"_cps": cps}):
 		if not hap.has_onset():
 			continue
 		var begin: float = hap.whole.begin.to_float()

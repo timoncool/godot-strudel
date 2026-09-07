@@ -250,6 +250,26 @@ static func configure(voice: StrudelVoice, value: Dictionary, length: float,
 	# Растяжка по высоте у многосэмплированных складывается со .speed().
 	voice.speed = voice.speed * float(picked.get("speed", 1.0))
 
+	# 🔴 ЭТОТ БЛОК УЖЕ ТЕРЯЛСЯ ОДИН РАЗ — при переносе соундфонтов (205480b) —
+	# и брейки снова поехали. Держится сверкой `s("amen1:1/2").fit()`.
+	#
+	# Оригинал: `sampler.mjs:88` — `const { begin = 0, end = 1 } = hapValue;`
+	# Этим живут `chop`, `striate`, `slice` и `splice`: они режут не звук, а
+	# событие, выставляя каждому куску свою пару долей буфера.
+	voice.sample_begin = clampf(_num(value, "begin", 0.0), 0.0, 1.0)
+	voice.sample_end = clampf(_num(value, "end", 1.0), 0.0, 1.0)
+	if voice.sample_end <= voice.sample_begin:
+		voice.sample_end = 1.0
+
+	# `unit("c")` меряет скорость В ЦИКЛАХ: сэмпл растягивается на столько
+	# циклов, сколько просит `speed`. Оригинал домножает скорость на ДЛИНУ
+	# буфера в секундах (`sampler.mjs:72`) — этим работают `loopAt` и `fit`.
+	# Без этого брейк в два круга играл со «скоростью» 0.36 — замедленной кашей.
+	if StrudelUtil.text(value.get("unit", "")) == "c":
+		var frames := (picked["data"] as PackedFloat32Array).size()
+		var file_rate := maxf(float(picked.get("rate", 48000.0)), 1.0)
+		voice.speed = voice.speed * (float(frames) / file_rate)
+
 
 ## Разложенные периоды: имя таблицы → веса и фазы её гармоник.
 static var _wt_spectrum: Dictionary = {}
