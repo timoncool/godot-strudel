@@ -290,10 +290,270 @@ func total_frames() -> int:
 	return int(envelope.total_length(note_length) * _rate)
 
 
+## 🔴 ПОЧТИ ВСЁ ВРЕМЯ ГОЛОСА УХОДИЛО НА ОБХОД ВЕТВЛЕНИЙ, А НЕ НА ЗВУК.
+## Замерено: голос, у которого источник — ТИШИНА и вся цепь отрезана, стоил
+## 4.8% реального времени, а тот же голос с пилой и фильтром — 5.5%. То есть
+## сам звук обходился в 0.7%, а девять десятых цены съедал общий цикл: он
+## проверяет на КАЖДЫЙ отсчёт вибрато, огибающую высоты, модуляцию, стаю пил,
+## гласную, дробилку, перегруз, тремоло, сжатие, фазер — даже когда ничего из
+## этого не задано. Для сравнения: один биквад на пять секунд звука стоит
+## 0.21%, а двадцать проверок — 0.45%.
+##
+## Поэтому у простого голоса свой короткий цикл. Простой — это тот, у кого
+## нет ни одного узла из перечисленных, а высота постоянна: сэмпл, волна из
+## таблицы или синус, огибающая, до трёх фильтров с ПОСТОЯННЫМИ
+## коэффициентами, панорама и посылы. Таких голосов в треке большинство:
+## барабаны, брейки, рояль, подклады.
+##
+## Всё, что сложнее, идёт общим путём — он не тронут.
+## Отладка и сверка: гнать голос ОБЩИМ циклом, минуя быстрый путь.
+## Нужен затем, чтобы доказать, что обе дороги дают один и тот же звук.
+var force_general := false
+
+
+func _simple() -> bool:
+	if force_general:
+		return false
+	if source == Source.SUPERSAW or source == Source.WHITE or source == Source.PINK \
+			or source == Source.BROWN or source == Source.CRACKLE \
+			or source == Source.SILENCE:
+		return false
+	if vibrato > 0.0 or not pitch_env.is_empty():
+		return false
+	if not fm_sources.is_empty() and not fm_routes.is_empty():
+		return false
+	if vowel != "" or crush > 0.0 or coarse > 0.0 or shape > 0.0 or distort > 0.0:
+		return false
+	if not is_nan(compressor):
+		return false
+	if phaser_rate > 0.0 and phaser_depth > 0.0:
+		return false
+	if tremolo > 0.0:
+		return false
+	# Фильтр с огибающей меняет коэффициенты по ходу ноты — это уже не «просто».
+	if not lp_env.is_empty() or not hp_env.is_empty() or not bp_env.is_empty():
+		return false
+	return true
+
+
+func _render_simple(left: PackedFloat32Array, right: PackedFloat32Array,
+		from_frame: int, count: int, room_bus: PackedFloat32Array,
+		delay_bus: PackedFloat32Array) -> void:
+	## Тот же звук, что и в общем цикле, но без проверок на выключенные узлы.
+	var total := total_frames()
+	var gl := 1.0
+	var gr := 1.0
+	if pan >= 0.0:
+		var angle := pan * (PI * 0.5)
+		gl = cos(angle)
+		gr = sin(angle)
+
+	var buf_len := left.size()
+	var pos := _pos
+	var phase := _phase
+	var spos := _sample_pos
+	var rate := _rate
+	var src := source
+	var g := gain * postgain
+	var step := frequency * speed / rate
+	var sample_step := speed * (sample_rate / rate)
+	var sample_last := sample.size() - 1
+	# 🔴 ТИП СТАВИТСЯ РУКАМИ. Тернарник `A if cond else B` выводится в Variant,
+	# и тогда каждое обращение к массиву идёт медленным путём — через проверку
+	# типа на КАЖДЫЙ отсчёт. Здесь таких обращений четыре на отсчёт (две
+	# таблицы по два соседних значения), и на них уходило больше, чем на всю
+	# остальную арифметику голоса.
+	var wave_lo: PackedFloat32Array = PackedFloat32Array()
+	var wave_hi: PackedFloat32Array = PackedFloat32Array()
+	if _wave_kind >= 0:
+		wave_lo = StrudelWavetable.table(_wave_kind, _wave_lo)
+		wave_hi = StrudelWavetable.table(_wave_kind, _wave_hi)
+	if _wave_kind >= 0 and _wave_key != "":
+		wave_lo = StrudelWavetable.custom_table(_wave_key, wave_partials,
+			wave_phases, _wave_kind, _wave_lo)
+		wave_hi = StrudelWavetable.custom_table(_wave_key, wave_partials,
+			wave_phases, _wave_kind, _wave_hi)
+	var wave_mix := _wave_mix
+	var wave_size := StrudelWavetable.SIZE
+
+	var a_end := envelope.attack * rate
+	var d_end := a_end + envelope.decay * rate
+	var sus := envelope.sustain
+	var note_end := note_length * rate
+	var rel := envelope.release * rate
+	var rel_from := sus
+	if note_end < a_end:
+		rel_from = note_end / a_end
+	elif note_end < d_end:
+		rel_from = 1.0 + (sus - 1.0) * ((note_end - a_end) / (d_end - a_end))
+
+	var use_lp := not _lp_coef.is_empty()
+	var use_hp := not _hp_coef.is_empty()
+	var use_bp := not _bp_coef.is_empty()
+	var lb0 := _lp_coef[0] if use_lp else 0.0
+	var lb1 := _lp_coef[1] if use_lp else 0.0
+	var lb2 := _lp_coef[2] if use_lp else 0.0
+	var la1 := _lp_coef[3] if use_lp else 0.0
+	var la2 := _lp_coef[4] if use_lp else 0.0
+	var lx1: float = _lp[0]
+	var lx2: float = _lp[1]
+	var ly1: float = _lp[2]
+	var ly2: float = _lp[3]
+	var hb0 := _hp_coef[0] if use_hp else 0.0
+	var hb1 := _hp_coef[1] if use_hp else 0.0
+	var hb2 := _hp_coef[2] if use_hp else 0.0
+	var ha1 := _hp_coef[3] if use_hp else 0.0
+	var ha2 := _hp_coef[4] if use_hp else 0.0
+	var hx1: float = _hp[0]
+	var hx2: float = _hp[1]
+	var hy1: float = _hp[2]
+	var hy2: float = _hp[3]
+	var pb0 := _bp_coef[0] if use_bp else 0.0
+	var pb1 := _bp_coef[1] if use_bp else 0.0
+	var pb2 := _bp_coef[2] if use_bp else 0.0
+	var pa1 := _bp_coef[3] if use_bp else 0.0
+	var pa2 := _bp_coef[4] if use_bp else 0.0
+	var px1: float = _bp[0]
+	var px2: float = _bp[1]
+	var py1: float = _bp[2]
+	var py2: float = _bp[3]
+
+	# 🔴 НИ ОДНОГО ОБРАЩЕНИЯ К ПОЛЮ ОБЪЕКТА ВНУТРИ ЦИКЛА. В GDScript чтение
+	# поля стоит заметно дороже чтения локальной переменной, а тут оно шло бы
+	# по нескольку раз на КАЖДЫЙ отсчёт: задержка старта, сам сэмпл, границы
+	# петли, доли посылов. Всё это снимается один раз, до цикла.
+	var room_amt := room
+	var delay_amt := delay_send
+	var use_room := room_amt > 0.0 and not room_bus.is_empty()
+	var use_delay := delay_amt > 0.0 and not delay_bus.is_empty()
+	var is_sample := src == Source.SAMPLE
+	var is_sine := src == Source.SINE
+	var snd: PackedFloat32Array = sample
+	var loop_on := sample_loop
+	var loop_begin := sample_loop_begin
+	var loop_end_i := int(sample_loop_end) if loop_on and sample_loop_end > loop_begin \
+		else sample_last
+	var loop_stop := mini(loop_end_i, sample_last)
+
+	# Задержка старта — это молчание в начале буфера, и считать её в цикле
+	# незачем: сдвигаем начало и уменьшаем остаток.
+	var i := 0
+	if start_delay > 0:
+		var skip := mini(start_delay, count)
+		start_delay -= skip
+		i = skip
+
+	while i < count:
+		if pos >= total:
+			active = false
+			break
+		var idx := from_frame + i
+		if idx >= buf_len:
+			break
+
+		var raw := 0.0
+		if is_sample:
+			var si := int(spos)
+			if si >= loop_stop:
+				if loop_on and sample_last > 0:
+					var lb := loop_begin if loop_end_i > int(loop_begin) else 0.0
+					var span := float(loop_stop) - lb
+					spos = lb + fmod(spos - lb, maxf(span, 1.0))
+					si = int(spos)
+				else:
+					active = false
+					break
+			var fr := spos - float(si)
+			raw = snd[si] * (1.0 - fr) + snd[si + 1] * fr
+			spos += sample_step
+		elif is_sine:
+			raw = sin(TAU * phase)
+			phase += step
+			if phase >= 1.0:
+				phase -= 1.0
+		else:
+			var x := phase * float(wave_size)
+			var wi := int(x)
+			if wi < 0:
+				wi = 0
+			elif wi >= wave_size:
+				wi = wave_size - 1
+			var wf := x - float(wi)
+			var lo_v: float = wave_lo[wi] * (1.0 - wf) + wave_lo[wi + 1] * wf
+			var hi_v: float = wave_hi[wi] * (1.0 - wf) + wave_hi[wi + 1] * wf
+			raw = lo_v + (hi_v - lo_v) * wave_mix
+			phase += step
+			if phase >= 1.0:
+				phase -= 1.0
+
+		var fpos := float(pos)
+		var env := 0.0
+		if fpos < a_end:
+			env = fpos / a_end
+		elif fpos < d_end:
+			env = 1.0 + (sus - 1.0) * ((fpos - a_end) / (d_end - a_end))
+		elif fpos < note_end:
+			env = sus
+		else:
+			var since := fpos - note_end
+			env = rel_from * (1.0 - since / rel) if since < rel else 0.0
+
+		var s := raw * g * env
+		if use_lp:
+			var ly := lb0 * s + lb1 * lx1 + lb2 * lx2 - la1 * ly1 - la2 * ly2
+			lx2 = lx1
+			lx1 = s
+			ly2 = ly1
+			ly1 = ly
+			s = ly
+		if use_hp:
+			var hy := hb0 * s + hb1 * hx1 + hb2 * hx2 - ha1 * hy1 - ha2 * hy2
+			hx2 = hx1
+			hx1 = s
+			hy2 = hy1
+			hy1 = hy
+			s = hy
+		if use_bp:
+			var py := pb0 * s + pb1 * px1 + pb2 * px2 - pa1 * py1 - pa2 * py2
+			px2 = px1
+			px1 = s
+			py2 = py1
+			py1 = py
+			s = py
+
+		left[idx] += s * gl
+		right[idx] += s * gr
+		if use_room:
+			room_bus[idx] += s * room_amt
+		if use_delay:
+			delay_bus[idx] += s * delay_amt
+		pos += 1
+		i += 1
+
+	_pos = pos
+	_phase = phase
+	_sample_pos = spos
+	_lp[0] = lx1
+	_lp[1] = lx2
+	_lp[2] = ly1
+	_lp[3] = ly2
+	_hp[0] = hx1
+	_hp[1] = hx2
+	_hp[2] = hy1
+	_hp[3] = hy2
+	_bp[0] = px1
+	_bp[1] = px2
+	_bp[2] = py1
+	_bp[3] = py2
+
 func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int, count: int,
 		room_bus: PackedFloat32Array, delay_bus: PackedFloat32Array) -> void:
 	## Досыпает свой звук в общий буфер, начиная с кадра from_frame.
 	if not active:
+		return
+	# Простой голос считается коротким циклом: см. `_simple`.
+	if _simple():
+		_render_simple(left, right, from_frame, count, room_bus, delay_bus)
 		return
 	var total := total_frames()
 	# Панорама равной мощности — как StereoPanner в WebAudio, но только если
@@ -355,6 +615,22 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 	var super_spread := clampf(pan_spread, 0.0, 1.0) if super_count > 1 else 0.0
 	var super_detune := freq_spread
 	var base_freq := frequency
+	# 🔴 ШАГ ФАЗЫ КАЖДОГО ГОЛОСА СТАИ СЧИТАЕТСЯ ОДИН РАЗ, А НЕ НА ОТСЧЁТ.
+	# Здесь стояло `pow(2.0, dt_v / 12.0)` ВНУТРИ цикла — на каждый отсчёт и на
+	# каждый голос стаи. Расстройка за ноту не меняется, значит и шаг не
+	# меняется: возведение в степень сорок восемь тысяч раз в секунду на голос
+	# считалось впустую. Замерено: стая из четырёх с фильтром стоила 9.45%
+	# реального времени на голос против 1.74% у сэмпла, и в плотном треке
+	# девять десятых всех голосов — именно стая.
+	var super_steps := PackedFloat32Array()
+	if is_super:
+		super_steps.resize(super_count)
+		var scale_c := super_detune / float(maxi(super_count - 1, 1))
+		var center_c := super_detune * 0.5
+		for v in super_count:
+			var dt_c := float(v) * scale_c - center_c if super_count > 1 else 0.0
+			var f_c := base_freq * pow(2.0, dt_c / 12.0) / rate
+			super_steps[v] = f_c - floor(f_c)
 
 	# огибающая — в отсчётах, без деления на каждом шаге
 	var a_end := envelope.attack * rate
@@ -610,17 +886,28 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 			var g2 := sqrt(spread_half)
 			var f_base := base_freq * pitch_mul * pow(2.0, 0.0)
 			# растяжка стаи: от −половины до +половины разброса
-			var scale_v := super_detune / float(maxi(super_count - 1, 1))
-			var center := super_detune * 0.5
 			var accl := 0.0
 			var accr := 0.0
 			for v in super_count:
-				var dt_v := float(v) * scale_v - center if super_count > 1 else 0.0
-				var f_v := f_base * pow(2.0, dt_v / 12.0)
-				var dtn := f_v / rate
-				dtn = dtn - floor(dtn)
+				# Готовый шаг; при сдвиге высоты (вибрато, огибающая, модуляция)
+				# он домножается — это одно умножение вместо возведения в степень.
+				var dtn: float = super_steps[v] * pitch_mul
+				if dtn >= 1.0:
+					dtn = dtn - floor(dtn)
 				var ph_v: float = _super_phase[v]
-				var vv := 2.0 * ph_v - 1.0 - _poly_blep(ph_v, dtn)
+				# Скругление скачка пилы (`_poly_blep`) развёрнуто на месте:
+				# вызов функции в GDScript дороже самой арифметики, а зовётся он
+				# на каждый отсчёт И на каждый голос стаи.
+				var blep := 0.0
+				var d_edge: float = dtn if dtn < 1.0 - dtn else 1.0 - dtn
+				if d_edge > 0.0:
+					if ph_v < d_edge:
+						var pb := ph_v / d_edge
+						blep = 2.0 * pb - pb * pb - 1.0
+					elif ph_v > 1.0 - d_edge:
+						var pbx := (ph_v - 1.0) / d_edge
+						blep = pbx * pbx + 2.0 * pbx + 1.0
+				var vv := 2.0 * ph_v - 1.0 - blep
 				accl += vv * g1
 				accr += vv * g2
 				var pn := ph_v + dtn

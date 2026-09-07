@@ -15,6 +15,8 @@ var _out := ""
 var _seconds := 8.0
 var _samples := ""
 var _cpm := 0.0
+## Движок держится полем, чтобы погасить его перед выходом из ЛЮБОЙ ветки.
+var _engine: StrudelEngine = null
 
 
 func _init() -> void:
@@ -58,6 +60,7 @@ func _init() -> void:
 		var n := bank.load_folder(_samples)
 		engine.bank = bank
 		print("[рендер] сэмплов в банке: ", n)
+	_engine = engine
 	engine.set_pattern(run["pattern"])
 	var cps: float = run.get("cps", 0.0)
 	if _cpm > 0.0:
@@ -102,10 +105,24 @@ func _init() -> void:
 		% [engine.played_events, engine.stolen_voices])
 	if peak < 1e-6:
 		printerr("[рендер] ТИШИНА — звука нет")
-		quit(1)
+		_bye(1)
 		return
 	print("[рендер] записано: ", _out)
-	quit(0)
+	_bye(0)
+
+
+func _bye(code: int) -> void:
+	## 🔴 ВЫХОД ТОЛЬКО ЧЕРЕЗ ГАШЕНИЕ. Движок опрашивает паттерн в рабочем
+	## потоке, а банк разбирает сэмплы в своём — и оба переживали выход:
+	## процесс стабильно падал в Segmentation fault УЖЕ ПОСЛЕ того, как всё
+	## посчитано и записано. Внешне это выглядело как «рендер сломан», хотя
+	## файл на диске был целым.
+	if _engine != null:
+		if _engine.bank != null and _engine.bank.has_method("prime_stop"):
+			_engine.bank.prime_stop()
+		_engine.shutdown()
+		_engine = null
+	quit(code)
 
 
 func _write_wav(path: String, left: PackedFloat32Array, right: PackedFloat32Array, rate: int) -> void:

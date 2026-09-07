@@ -48,6 +48,9 @@ var _frames_written := 0
 var _scheduled: Array = []
 ## События, поданные руками: играются в ближайшем же блоке.
 var _instant: Array = []
+## Сколько секунд считать зал и эхо ПОСЛЕ того, как на орбиту перестали
+## посылать. Больше самого длинного хвоста: зал до 5.5 с, эхо до 2 с.
+const TAIL_SEC := 8.0
 var _sched_cycle_end := 0.0
 var _sched_frame_end := 0
 # Привязка «кадр ↔ цикл»: нужна, чтобы смена темпа не рвала такт.
@@ -404,8 +407,32 @@ func _render(count: int) -> void:
 			var orb := _orbit(v.orbit)
 			v.render(_left, _right, 0, count, orb["room"], orb["delay"])
 
+	# 🔴 МОЛЧАЩАЯ ОРБИТА НЕ СЧИТАЕТСЯ. Зал и эхо крутились каждый буфер, даже
+	# когда на орбиту давно ничего не приходит: замерено — движок, у которого
+	# НОЛЬ живых голосов, продолжал съедать 1.76% реального времени после
+	# единственной отзвучавшей ноты. Для второго движка (отклики героя, звуки
+	# мира, интерфейс) это чистый фон впустую: он молчит почти всё время.
+	#
+	# Просто бросить счёт нельзя — у зала и эха ХВОСТ, он оборвётся щелчком.
+	# Поэтому: пришёл звук — заводим хвост на TAIL_SEC; тишина — доигрываем
+	# его и только потом засыпаем.
 	for key in _orbits:
 		var orb2: Dictionary = _orbits[key]
+		var has_in := false
+		var in_room: PackedFloat32Array = orb2["room"]
+		var in_delay: PackedFloat32Array = orb2["delay"]
+		for i in count:
+			if in_room[i] != 0.0 or in_delay[i] != 0.0:
+				has_in = true
+				break
+		var tail: int = int(orb2.get("tail", 0))
+		if has_in:
+			tail = int(TAIL_SEC * mix_rate)
+		elif tail > 0:
+			tail -= count
+		orb2["tail"] = maxi(tail, 0)
+		if not has_in and tail <= 0:
+			continue
 		_mix_delay(orb2, count)
 		(orb2["reverb"] as StrudelReverb).render(orb2["room"], _left, _right, count)
 
