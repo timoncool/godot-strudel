@@ -108,6 +108,13 @@ var wave_partials: Array = []
 var wave_phases: Array = []
 ## Какой ряд коэффициентов берётся за основу своей волны.
 var wave_base_kind := StrudelWavetable.Kind.USER
+## Готовый отпечаток своей волны. Пустой — считается по весам и фазам.
+##
+## 🔴 У ВОЛНОВОЙ ТАБЛИЦЫ ВЕСОВ СОТНЯ, И СОБИРАТЬ КЛЮЧ СТРОКОЙ НА КАЖДУЮ НОТУ
+## ДОРОГО: `custom_key` склеивает `str()` со всех весов и фаз, то есть двести
+## с лишним чисел на ноту. Форма таблицы за ноту не меняется, поэтому тот, кто
+## её ставит, может подать и готовое имя.
+var wave_key := ""
 
 ## Пила-стая: сколько голосов, насколько разведены по высоте и по панораме.
 var unison := 5
@@ -168,6 +175,12 @@ var _hp := [0.0, 0.0, 0.0, 0.0]
 var _lp_coef := PackedFloat32Array()
 var _hp_coef := PackedFloat32Array()
 var _bp := [0.0, 0.0, 0.0, 0.0]
+## Те же три фильтра, но для РАЗНИЦЫ каналов у стаи пил. Своё состояние им
+## нужно потому, что фильтр помнит прошлые отсчёты: прогнать через одну память
+## два разных сигнала — значит перемешать их хвосты.
+var _lp_side := [0.0, 0.0, 0.0, 0.0]
+var _hp_side := [0.0, 0.0, 0.0, 0.0]
+var _bp_side := [0.0, 0.0, 0.0, 0.0]
 var _bp_coef := PackedFloat32Array()
 # Гласная — пять параллельных полосовых, их состояния лежат подряд.
 var _vw_coef := PackedFloat32Array()
@@ -239,7 +252,8 @@ func _setup_wavetable() -> void:
 	_wave_mix = clampf(pos - float(_wave_lo), 0.0, 1.0)
 	if source == Source.CUSTOM:
 		_wave_kind = wave_base_kind
-		_wave_key = StrudelWavetable.custom_key(wave_partials, wave_phases, _wave_kind)
+		_wave_key = wave_key if wave_key != "" \
+			else StrudelWavetable.custom_key(wave_partials, wave_phases, _wave_kind)
 		StrudelWavetable.custom_table(_wave_key, wave_partials, wave_phases,
 			_wave_kind, _wave_lo)
 		StrudelWavetable.custom_table(_wave_key, wave_partials, wave_phases,
@@ -301,6 +315,7 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 	var spos := _sample_pos
 	var rate := _rate
 	var src := source
+	var is_super := src == Source.SUPERSAW
 	var g := gain
 	var post := postgain
 	var freq_step := frequency * speed / rate
@@ -383,6 +398,18 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 	var pb2 := _bp_coef[2] if use_bp else 0.0
 	var pa1 := _bp_coef[3] if use_bp else 0.0
 	var pa2 := _bp_coef[4] if use_bp else 0.0
+	var sl1: float = _lp_side[0]
+	var sl2: float = _lp_side[1]
+	var sly1: float = _lp_side[2]
+	var sly2: float = _lp_side[3]
+	var sh1: float = _hp_side[0]
+	var sh2: float = _hp_side[1]
+	var shy1: float = _hp_side[2]
+	var shy2: float = _hp_side[3]
+	var sp1: float = _bp_side[0]
+	var sp2: float = _bp_side[1]
+	var spy1: float = _bp_side[2]
+	var spy2: float = _bp_side[3]
 	var px1: float = _bp[0]
 	var px2: float = _bp[1]
 	var py1: float = _bp[2]
@@ -555,6 +582,7 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 
 		# ── источник ──
 		var raw := 0.0
+		var side_raw := 0.0
 		if src == Source.SAMPLE:
 			var si := int(spos)
 			var loop_end_i := int(sample_loop_end) if sample_loop and sample_loop_end > sample_loop_begin else sample_last
@@ -607,6 +635,7 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 			raw = (accl + accr) * 0.5 * super_scale
 			_super_l = accl * super_scale
 			_super_r = accr * super_scale
+			side_raw = (accl - accr) * 0.5 * super_scale
 		elif src == Source.SAW or src == Source.SQUARE or src == Source.TRIANGLE \
 				or src == Source.CUSTOM:
 			# Две соседние таблицы и перетекание между ними — как в
@@ -650,6 +679,7 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 			env = rel_from * (1.0 - since / rel) if since < rel else 0.0
 
 		var s := raw * g * env
+		var s_side := side_raw * g * env
 
 		# ── цепь, в порядке superdough ──
 		if use_lp:
@@ -673,6 +703,31 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 			py2 = py1
 			py1 = py
 			s = py
+		if is_super:
+			# Разница каналов идёт через ТЕ ЖЕ фильтры со своей памятью.
+			# Фильтры линейны, поэтому «отфильтровать середину и разницу» и
+			# «отфильтровать левый и правый» — это одно и то же.
+			if use_lp:
+				var sly := lb0 * s_side + lb1 * sl1 + lb2 * sl2 - la1 * sly1 - la2 * sly2
+				sl2 = sl1
+				sl1 = s_side
+				sly2 = sly1
+				sly1 = sly
+				s_side = sly
+			if use_hp:
+				var shy := hb0 * s_side + hb1 * sh1 + hb2 * sh2 - ha1 * shy1 - ha2 * shy2
+				sh2 = sh1
+				sh1 = s_side
+				shy2 = shy1
+				shy1 = shy
+				s_side = shy
+			if use_bp:
+				var spy := pb0 * s_side + pb1 * sp1 + pb2 * sp2 - pa1 * spy1 - pa2 * spy2
+				sp2 = sp1
+				sp1 = s_side
+				spy2 = spy1
+				spy1 = spy
+				s_side = spy
 		if use_vowel:
 			# Гласная — пять полосовых ПАРАЛЛЕЛЬНО, сумма с весами и подъёмом
 			# на восемь (`vowel.mjs:66`). Последовательно они дали бы тишину.
@@ -728,14 +783,22 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 				phaser_ph -= 1.0
 		s *= post
 
-		if src == Source.SUPERSAW and absf(raw) > 1e-9:
-			# 🔴 Стая пил СТЕРЕО САМА: голоса раскиданы по ушам через один.
-			# Цепь эффектов у нас одноканальная, поэтому к ушам возвращается
-			# та же разница, помноженная на то, во сколько раз цепь изменила
-			# отсчёт. Для линейной цепи это точно, для перегруза — близко.
-			var ratio := s / raw
-			left[idx] += _super_l * ratio * gl
-			right[idx] += _super_r * ratio * gr
+		if is_super:
+			# 🔴 СТАЯ ПИЛ СТЕРЕО САМА, и разница каналов идёт СВОЕЙ веткой.
+			# Раньше здесь стояло восстановление по отношению `s / raw`: цепь
+			# считалась на полусумме, а к ушам разница возвращалась умноженной
+			# на то, во сколько раз цепь изменила отсчёт. С фильтром это
+			# разваливается: фильтр помнит прошлое, и в отсчёт, где вход почти
+			# ноль, а выход нет, отношение улетает в тысячи. Замерено:
+			# `s("supersaw").unison(4).lpf(1200)` давало пик 203 вместо 0.04,
+			# а целый трек на таких стабах — 62 тысячи. Порог `|raw| > 1e-9` от
+			# этого не спасал: беда не в делении на ноль, а в делении на малое.
+			# Теперь фильтры честно считают середину и разницу по отдельности,
+			# а уши собираются обратно сложением и вычитанием. Нелинейные узлы
+			# (перегруз, сжатие) по-прежнему считаются на середине.
+			s_side *= post
+			left[idx] += (s + s_side) * gl
+			right[idx] += (s - s_side) * gr
 		else:
 			left[idx] += s * gl
 			right[idx] += s * gr
@@ -757,6 +820,18 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 	_hp[1] = hx2
 	_hp[2] = hy1
 	_hp[3] = hy2
+	_lp_side[0] = sl1
+	_lp_side[1] = sl2
+	_lp_side[2] = sly1
+	_lp_side[3] = sly2
+	_hp_side[0] = sh1
+	_hp_side[1] = sh2
+	_hp_side[2] = shy1
+	_hp_side[3] = shy2
+	_bp_side[0] = sp1
+	_bp_side[1] = sp2
+	_bp_side[2] = spy1
+	_bp_side[3] = spy2
 	_bp[0] = px1
 	_bp[1] = px2
 	_bp[2] = py1

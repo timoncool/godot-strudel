@@ -13,7 +13,8 @@ extends Control
 ## `AudioEffectSpectrumAnalyzer`, то есть это настоящий выход, а не рисунок
 ## по событиям.
 ##
-## Ключи запуска: `--tune=<имя>` — сразу взять трек из списка,
+## Ключи запуска: `--tune=<имя>` — взять трек из списка, `--file=<путь>` —
+## открыть свой файл с кодом, `--samples=<папка>` — играть чужим банком,
 ## `--shot=<файл> --warm=<секунд>` — снимок и выход.
 
 const BUS := &"StrudelRepl"
@@ -78,6 +79,8 @@ var _font: Font
 var _shot_path := ""
 var _shot_at := 4.0
 var _want_tune := ""
+var _want_file := ""
+var _want_samples := ""
 var _clock := 0.0
 
 const BACK := Color(0.055, 0.065, 0.09)
@@ -99,7 +102,6 @@ func _ready() -> void:
 	add_child(music)
 	music.event_played.connect(_on_event)
 	music.error_raised.connect(func(m: String) -> void: _error = m)
-	music.set_bank(_load_packs())
 
 	for arg in OS.get_cmdline_user_args():
 		var s := String(arg)
@@ -109,6 +111,11 @@ func _ready() -> void:
 			_shot_at = s.substr(7).to_float()
 		elif s.begins_with("--tune="):
 			_want_tune = s.substr(7)
+		elif s.begins_with("--file="):
+			_want_file = s.substr(7)
+		elif s.begins_with("--samples="):
+			_want_samples = s.substr(10)
+	music.set_bank(_load_packs())
 
 	_names = _list_tunes()
 	_pick.add_item("— свой код —")
@@ -117,6 +124,16 @@ func _ready() -> void:
 	print("Треков в списке: %d, сэмплов в банке: %d. Ctrl+Enter — играть, Esc — выход."
 		% [_names.size(), int(music.stats().get("сэмплов_в_банке", 0))])
 
+	if _want_file != "":
+		var own := FileAccess.open(_want_file, FileAccess.READ)
+		if own == null:
+			_error = "не прочитал " + _want_file
+		else:
+			var text := own.get_as_text()
+			own.close()
+			_code.text = text.replace("\r\n", "\n").replace("\r", "\n")
+			_code.set_caret_line(0)
+			_code.scroll_vertical = 0
 	if _want_tune != "":
 		for i in _names.size():
 			if _names[i].get_basename() == _want_tune:
@@ -134,6 +151,10 @@ func _load_packs() -> StrudelSampleBank:
 	for path in EXTRA_PACKS:
 		if DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(path)):
 			bank.load_folder(ProjectSettings.globalize_path(path))
+	# Ключ `--samples=<папка>` доливает чужой банк: банк копит паки, поэтому
+	# папка игры ложится поверх примеров, а не вместо них.
+	if _want_samples != "" and DirAccess.dir_exists_absolute(_want_samples):
+		bank.load_folder(_want_samples)
 	return bank
 
 
@@ -152,7 +173,9 @@ func _missing_voices(code: String) -> PackedStringArray:
 	for hap in (run["pattern"] as StrudelPattern).query_arc(0.0, 8.0):
 		if not hap.value is Dictionary:
 			continue
-		var name := String((hap.value as Dictionary).get("s", ""))
+		# Имя берётся StrudelUtil.text: встроенный String() роняет сценарий на
+		# всём, что не строка, а в событии там бывает и число.
+		var name := StrudelUtil.text((hap.value as Dictionary).get("s", ""))
 		if name == "" or seen.has(name):
 			continue
 		seen[name] = true
@@ -334,7 +357,7 @@ func _start() -> void:
 
 func _on_event(value: Dictionary) -> void:
 	var mark := Mark.new()
-	var sound := String(value.get("s", ""))
+	var sound := StrudelUtil.text(value.get("s", ""))
 	var gain := clampf(float(value.get("gain", 0.5)), 0.02, 1.5)
 	match sound:
 		"bd":

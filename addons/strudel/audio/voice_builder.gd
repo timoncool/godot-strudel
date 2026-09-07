@@ -14,6 +14,9 @@ const DEFAULT_SOUND := "triangle"
 ## Приглушение синтеза перед огибающей (`synth.mjs:54`).
 const SYNTH_ATTENUATION := 0.3
 
+## Сколько обертонов берётся у волновой таблицы.
+const WT_PARTIALS := 128
+
 ## Имена синтезов Strudel → источники голоса.
 const SYNTHS := {
 	"sine": StrudelVoice.Source.SINE,
@@ -131,6 +134,41 @@ static func configure(voice: StrudelVoice, value: Dictionary, length: float,
 	var is_synth := sound == "" or SYNTHS.has(sound)
 	var picked := {}
 
+	# 🔴 ИМЯ НА `wt_` — ЭТО НЕ СЭМПЛ, А ОДИН ПЕРИОД ВОЛНЫ.
+	# В оригинале такие имена уходят другой дорогой ещё при загрузке:
+	# `sampler.mjs:386` — `if (key.startsWith('wt_')) registerWaveTable(...)`,
+	# и дальше `wavetable.mjs:217` играет их ОСЦИЛЛЯТОРОМ на частоте ноты, а не
+	# проигрывает файл. Разница слышна сразу: период эпиано — 601 отсчёт, это
+	# тринадцать миллисекунд, и как сэмпл он звучит хрипом вместо тона.
+	#
+	# Своего осциллятора для этого заводить не нужно: у плагина уже есть
+	# band-limited «своя волна» (`Source.CUSTOM`), которой нужны веса обертонов.
+	# Поэтому период раскладывается в гармоники — один раз на имя.
+	if sound.begins_with("wt_") and bank != null and not bank.is_empty():
+		var wt_index := int(_num(value, "n", 0.0))
+		var wt_bank := StrudelUtil.text(value.get("bank", ""))
+		var frame := bank.resolve(sound, wt_index, wt_bank, note_midi)
+		var period: PackedFloat32Array = frame.get("data", PackedFloat32Array())
+		if period.size() >= 4:
+			var key := "%s:%s:%d" % [wt_bank, sound, wt_index]
+			var spectrum: Dictionary = _wavetable_spectrum(key, period)
+			voice.source = StrudelVoice.Source.CUSTOM
+			voice.wave_base_kind = StrudelWavetable.Kind.USER
+			voice.wave_partials = spectrum["mags"]
+			voice.wave_phases = spectrum["phases"]
+			voice.wave_key = key
+			# Частоту ведёт НОТА, а не растяжка сэмпла: осциллятор крутит
+			# период сам. Растяжку, посчитанную банком, здесь не применяем.
+			# Потолок огибающей у волновой таблицы тот же 0.3, что у синтезов
+			# (`wavetable.mjs:324` — `getParamADSR(..., 0, 0.3, ...)`).
+			voice.gain *= SYNTH_ATTENUATION
+			voice.envelope = StrudelEnvelope.from_values(
+				value.get("attack"), value.get("decay"),
+				value.get("sustain"), value.get("release"),
+				StrudelEnvelope.SYNTH_DEFAULTS
+			)
+			return
+
 	# Голоса `gm_*` — пресеты webaudiofont, как `@strudel/soundfonts` в
 	# Strudel: зона по диапазону клавиш, петля, высота в центах.
 	if sound.begins_with("gm_") and gm_fonts != null and gm_fonts.has(sound):
@@ -211,6 +249,57 @@ static func configure(voice: StrudelVoice, value: Dictionary, length: float,
 	voice.sample_rate = float(picked["rate"])
 	# Растяжка по высоте у многосэмплированных складывается со .speed().
 	voice.speed = voice.speed * float(picked.get("speed", 1.0))
+
+
+## Разложенные периоды: имя таблицы → веса и фазы её гармоник.
+static var _wt_spectrum: Dictionary = {}
+
+
+static func _wavetable_spectrum(key: String, period: PackedFloat32Array) -> Dictionary:
+	## Один период волны → веса и фазы обертонов для своей волны голоса.
+	##
+	## Форма периода от ноты не зависит, поэтому считается один раз на имя.
+	## Сколько гармоник брать: половина длины периода — предел по Найквисту,
+	## выше идут уже отражения. Больше сотни не нужно: дальше вклад тонет, а
+	## `StrudelWavetable` всё равно режет их по полосам частоты.
+	if _wt_spectrum.has(key):
+		return _wt_spectrum[key]
+	var length := period.size()
+	var count := mini(WT_PARTIALS, length / 2)
+	var mags := PackedFloat32Array()
+	var phases := PackedFloat32Array()
+	mags.resize(count)
+	phases.resize(count)
+	for idx in count:
+		var n := idx + 1
+		var w := TAU * float(n) / float(length)
+		# Поворот на шаг вместо вызова cos/sin на каждый отсчёт: то же, чем
+		# считает сами таблицы `StrudelWavetable._build_custom`.
+		var cw := cos(w)
+		var sw := sin(w)
+		var cc := 1.0
+		var ss := 0.0
+		var a := 0.0
+		var b := 0.0
+		for i in length:
+			var x := period[i]
+			a += x * cc
+			b += x * ss
+			var nc := cc * cw - ss * sw
+			ss = ss * cw + cc * sw
+			cc = nc
+		a *= 2.0 / float(length)
+		b *= 2.0 / float(length)
+		# 🔴 ПЕРЕВОД В ВЕС И ФАЗУ — НЕ ПРОИЗВОЛЬНЫЙ, ОН ЗАДАН ТЕМ, КАК СТРОИТСЯ
+		# СВОЯ ВОЛНА. `_build_custom` для «user» кладёт `mag * sin(θ - TAU*ph)`,
+		# а период — это `a*cos(θ) + b*sin(θ)`. Приравняв одно к другому:
+		# mag = √(a² + b²), ph = atan2(-a, b) / TAU. Ошибись здесь — и волна
+		# выйдет с тем же спектром, но другой формой.
+		mags[idx] = sqrt(a * a + b * b)
+		phases[idx] = atan2(-a, b) / TAU
+	var out := {"mags": mags, "phases": phases}
+	_wt_spectrum[key] = out
+	return out
 
 
 static func _midi_of(value: Dictionary) -> float:
