@@ -93,6 +93,8 @@ signal voices_exhausted(total_stolen: int, limit: int)
 			_engine.master_limiter = value
 
 var _player: AudioStreamPlayer = null
+## Партии последнего разобранного кода: имя метки → паттерн.
+var _layers: Dictionary = {}
 var _engine: StrudelEngine = null
 var _bank: StrudelSampleBank = null
 var _playing := false
@@ -263,6 +265,49 @@ func set_pattern(pattern: StrudelPattern) -> void:
 	_engine.set_pattern(pattern)
 
 
+func trigger(value: Dictionary, length: float = 0.25) -> void:
+	## Сыграть событие СРАЗУ, без всякого паттерна: нота героя, звук капли,
+	## отклик интерфейса. Голос — любой, какой понимает Strudel.
+	##
+	## Плеер для этого не обязан ничего играть: выход поднимается сам, и один
+	## и тот же узел годится и на трек, и на россыпь отдельных звуков.
+	##
+	## [codeblock]
+	## sfx.trigger({"s": "wt_epiano", "note": 67, "gain": 0.7}, 0.3)
+	## [/codeblock]
+	if _engine == null:
+		_build()
+	open()
+	_engine.trigger(value, length)
+
+
+func open() -> void:
+	## Поднять выход, не заводя паттерна: плеер начинает считать звук и ждать
+	## событий. Нужен, когда узел работает звуковой машиной, а не проигрывателем.
+	if _engine == null:
+		_build()
+	if _player != null and not _player.playing:
+		_player.play()
+	_playing = true
+
+
+func layers() -> Dictionary:
+	## Партии последнего разобранного кода: имя метки → паттерн.
+	##
+	## 🔴 ЭТО И ЕСТЬ СПОСОБ ОТДАТЬ ПАРТИЮ ИГРОКУ. Пометь лид в треке
+	## подчёркиванием (`_lead:`) — движок его не сыграет, но здесь он лежит
+	## целым; спрашивай у него ноты (`query_arc`) и подавай их в [method
+	## trigger] по действию человека. Трек идёт своим чередом, лид ведёт игрок,
+	## и звучит он тем же голосом, что задуман в треке.
+	return _layers
+
+
+func layer(name: String) -> StrudelPattern:
+	## Одна партия по имени метки. Ничего не нашлось — null.
+	var got: Variant = _layers.get(name, null)
+	return got if got is StrudelPattern else null
+
+
 func set_cycles_per_second(value: float) -> void:
 	## Смена темпа на ходу, без сброса такта.
 	if _engine != null:
@@ -307,6 +352,7 @@ func _apply_code(source: String) -> bool:
 		_fail(String(run.get("error", "неизвестная ошибка")))
 		return false
 	_last_error = ""
+	_layers = run.get("layers", {})
 	_engine.set_pattern(run["pattern"])
 	var cps: float = run.get("cps", 0.0)
 	if cps > 0.0:

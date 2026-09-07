@@ -46,6 +46,8 @@ var master_limiter := false
 var _voices: Array[StrudelVoice] = []
 var _frames_written := 0
 var _scheduled: Array = []
+## События, поданные руками: играются в ближайшем же блоке.
+var _instant: Array = []
 var _sched_cycle_end := 0.0
 var _sched_frame_end := 0
 # Привязка «кадр ↔ цикл»: нужна, чтобы смена темпа не рвала такт.
@@ -104,6 +106,7 @@ func setup(rate: float) -> void:
 func reset_clock() -> void:
 	_q_invalidate()
 	_q_join()
+	_instant.clear()
 	# 🔴 ХВОСТЫ ОРБИТ ТОЖЕ СБРАСЫВАЮТСЯ. Голоса глушились, а в орбитах
 	# оставались до двух секунд записанного эха и звенящие гребёнки зала —
 	# и они звучали уже в СЛЕДУЮЩЕМ треке: линия задержки читалась ровно с
@@ -303,6 +306,27 @@ func _ensure_scheduled(until_frame: int) -> void:
 # Сведение
 # ═══════════════════════════════════════════════════════════════════════════
 
+func trigger(value: Dictionary, length: float = 0.25) -> void:
+	## Сыграть событие НЕМЕДЛЕННО, вне всякого паттерна.
+	##
+	## Тем же путём, что и нота трека: `StrudelVoiceBuilder` разбирает событие
+	## и заводит голос, поэтому доступно ВСЁ — синтез, супер-пила, волновые
+	## таблицы, сэмплы, `gm_*`, `sf:`, огибающие, фильтры, орбиты.
+	##
+	## Ради этого движок и разделён на часы и голоса: под руку игрока часов
+	## нет, есть только нажатие. Событие ложится в ближайший блок звука, то
+	## есть задержка равна размеру буфера — те же десятки миллисекунд, с
+	## которыми играет и сам трек.
+	##
+	## Пример — звук капли, шаг интерфейса, нота героя в ритм-игре:
+	## [codeblock]
+	## engine.trigger({"s": "wt_epiano", "note": 60, "gain": 0.8}, 0.4)
+	## [/codeblock]
+	if value.is_empty():
+		return
+	_instant.append({"value": value, "length": maxf(length, 0.01)})
+
+
 func fill(playback: AudioStreamGeneratorPlayback) -> void:
 	var available := playback.get_frames_available()
 	if available <= 0:
@@ -351,6 +375,13 @@ func _render(count: int) -> void:
 		if frame < _frames_written:
 			frame = _frames_written  # опоздавшее — играем сразу, а не теряем
 		_trigger(next["value"], next["length"], frame - _frames_written, count)
+
+	# Поданные руками события — в начало этого же блока.
+	if not _instant.is_empty():
+		var taken := _instant
+		_instant = []
+		for item in taken:
+			_trigger(item["value"], float(item["length"]), 0, count)
 
 	# 🔴 Шины орбит готовятся ПОСЛЕ запуска событий, а не до: событие может
 	# завести НОВУЮ орбиту, и её буферы иначе остались бы пустыми — голос

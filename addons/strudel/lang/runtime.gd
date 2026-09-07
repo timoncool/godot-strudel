@@ -19,7 +19,13 @@ var error := ""
 
 
 static func run(source: String) -> Dictionary:
-	## → {ok=true, pattern=StrudelPattern, cps=float} либо {ok=false, error=…}
+	## → {ok=true, pattern, cps, layers} либо {ok=false, error=…}
+	##
+	## `layers` — партии по именам меток (`$:` даёт "$", `lead:` даёт "lead"),
+	## ВКЛЮЧАЯ заглушённые подчёркиванием. Нужны они затем, что партию можно не
+	## только слушать: её можно ВЫНУТЬ из трека и отдать игроку, чтобы он вёл
+	## её сам — сбором, рывком, чем угодно. Тогда трек играет всё, кроме лида,
+	## а лид звучит тем же голосом и теми же нотами, но по действию человека.
 	var rt := StrudelRuntime.new()
 	return rt.execute(source)
 
@@ -35,6 +41,9 @@ func execute(source: String) -> Dictionary:
 	var outputs: Array = []
 	var last: Variant = null
 	var had_label := false
+	## Метка → её паттерн. Заглушённые тоже здесь: их не слышно в общем
+	## паттерне, но взять их наружу можно и нужно.
+	var layers: Dictionary = {}
 
 	for st in parsed["program"]:
 		if error != "":
@@ -55,6 +64,10 @@ func execute(source: String) -> Dictionary:
 					# замерено: `_$: s("bd*4")` вместе с `$: s("hh*8")` давали
 					# 24 события за два круга вместо 16.
 					var muted := label.begins_with("_") or label.ends_with("_")
+					if value is StrudelPattern:
+						# Имя метки без глушащих подчёркиваний: партия зовётся
+						# одинаково, слышно её сейчас или нет.
+						layers[label.lstrip("_").rstrip("_")] = value
 					if value is StrudelPattern and not muted:
 						outputs.append(value)
 				else:
@@ -73,11 +86,15 @@ func execute(source: String) -> Dictionary:
 		# начатая или закончённая подчёркиванием, глушит строку (`repl.mjs:353`),
 		# и код, где заглушено всё, в оригинале просто молчит.
 		if had_label:
-			return {"ok": true, "pattern": StrudelPattern.silence(), "cps": cps}
+			return {"ok": true, "pattern": StrudelPattern.silence(), "cps": cps,
+				"layers": layers}
 		return {"ok": false, "error": "код не дал ни одного паттерна"}
 
 	var pattern: StrudelPattern = outputs[0] if outputs.size() == 1 else StrudelPattern.stack(outputs)
-	return {"ok": true, "pattern": pattern, "cps": cps}
+	if layers.is_empty() and pattern != null:
+		# Кода без меток тоже касается: вся строка — это партия "$".
+		layers["$"] = pattern
+	return {"ok": true, "pattern": pattern, "cps": cps, "layers": layers}
 
 
 func _fail(message: String) -> Variant:
