@@ -22,7 +22,7 @@ extends RefCounted
 ## −0.75 дБ, которых у PolyBLEP нет.
 
 enum Source { SILENCE, SINE, SAW, SQUARE, TRIANGLE, WHITE, PINK, BROWN, SAMPLE,
-	SUPERSAW, CUSTOM }
+	SUPERSAW, CUSTOM, CRACKLE }
 
 ## Что звучит.
 var source: Source = Source.SINE
@@ -63,6 +63,9 @@ var bpq := 1.0
 var vowel := ""
 
 var crush := 0.0
+## Плотность треска у `crackle` (`density` в Strudel): вероятность
+## импульса на отсчёт равна density·0.01 (`superdough/noise.mjs:38`).
+var density := 0.03
 var coarse := 0.0
 var shape := 0.0
 
@@ -628,6 +631,10 @@ func render(left: PackedFloat32Array, right: PackedFloat32Array, from_frame: int
 		elif src == Source.BROWN:
 			_brown = clampf(_brown + (_rng.randf() * 2.0 - 1.0) * 0.02, -1.0, 1.0)
 			raw = _brown * 3.0
+		elif src == Source.CRACKLE:
+			# Треск винила: редкий случайный импульс, иначе тишина
+			# (`superdough/noise.mjs`, buffer не кэшируется — каждый раз новый).
+			raw = (_rng.randf() * 2.0 - 1.0) if _rng.randf() < density * 0.01 else 0.0
 
 		# ── огибающая (тот же расчёт, что в StrudelEnvelope) ──
 		var fpos := float(pos)
@@ -809,6 +816,8 @@ func _source_sample() -> float:
 			_brown += (_rng.randf() * 2.0 - 1.0) * 0.02
 			_brown = clampf(_brown, -1.0, 1.0)
 			return _brown * 3.0
+		Source.CRACKLE:
+			return (_rng.randf() * 2.0 - 1.0) if _rng.randf() < density * 0.01 else 0.0
 	return 0.0
 
 

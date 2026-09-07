@@ -25,6 +25,7 @@ const SYNTHS := {
 	"white": StrudelVoice.Source.WHITE,
 	"pink": StrudelVoice.Source.PINK,
 	"brown": StrudelVoice.Source.BROWN,
+	"crackle": StrudelVoice.Source.CRACKLE,
 	"supersaw": StrudelVoice.Source.SUPERSAW,
 	# «user» — волна целиком из своих обертонов (`partials`).
 	"user": StrudelVoice.Source.CUSTOM,
@@ -56,6 +57,8 @@ static func configure(voice: StrudelVoice, value: Dictionary, length: float,
 	voice.bpq = _num(value, "bandq", 1.0)
 	voice.vowel = StrudelUtil.text(value.get("vowel", ""))
 	voice.crush = _num(value, "crush", 0.0)
+	# Плотность треска у `crackle`; умолчание Strudel — 0.03 (`superdough.mjs:189`).
+	voice.density = _num(value, "density", 0.03)
 	voice.coarse = _num(value, "coarse", 0.0)
 	voice.shape = _num(value, "shape", 0.0)
 	voice.room = _num(value, "room", 0.0)
