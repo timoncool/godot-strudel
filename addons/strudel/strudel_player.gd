@@ -55,6 +55,20 @@ signal voices_exhausted(total_stolen: int, limit: int)
 		if _engine != null and not _cps_from_code:
 			_engine.set_cps(value / 60.0)
 
+## Зал и эхо орбит — на ШТАТНЫХ узлах Godot: под каждую орбиту заводятся
+## две шины с `AudioEffectReverb` и `AudioEffectDelay`, посылы идут туда, а
+## сведённое возвращается в [member bus]. Это тот же принцип, что у Strudel:
+## там зал — нативный узел браузера, а не скрипт.
+##
+## 🔴 ПОЧЕМУ НЕ СВОЙ ЗАЛ. Свой (`StrudelReverb`) рекурсивный, и хвост у него
+## на 8.7 дБ тише и иной формы, чем у оригинала; а честная свёртка с импульсом,
+## как в `reverbGen.mjs`, замерена настоящим кодом на GDScript — 105% реального
+## времени на ОДИН зал. Штатный узел даёт хвост в −1.2 дБ от оригинала и стоит
+## почти ничего. Свой остаётся для оффлайн-рендера: там звукового сервера нет.
+@export var native_effects := true
+## Во сколько раз ослаблен посыл в штатный зал — см. `_apply_wet_settings`.
+const SEND_TRIM := 0.5
+
 ## Шина вывода. Своей шины плагин не заводит и чужих не трогает.
 @export var bus: StringName = &"Master":
 	set(value):
@@ -93,6 +107,8 @@ signal voices_exhausted(total_stolen: int, limit: int)
 			_engine.master_limiter = value
 
 var _player: AudioStreamPlayer = null
+## Орбита → её шины, узлы и проигрыватели посылов.
+var _wet: Dictionary = {}
 ## Партии последнего разобранного кода: имя метки → паттерн.
 var _layers: Dictionary = {}
 var _engine: StrudelEngine = null
@@ -113,6 +129,7 @@ func _ready() -> void:
 
 func _build() -> void:
 	_engine = StrudelEngine.new()
+	_engine.wet_external = native_effects
 	_engine.max_voices = max_voices
 	_engine.lookahead = lookahead
 	_engine.master_limiter = master_limiter
@@ -197,7 +214,145 @@ func _voices_in_code() -> PackedStringArray:
 	return out
 
 
+func _capacity() -> int:
+	var stream := _player.stream as AudioStreamGenerator
+	return int(stream.buffer_length * stream.mix_rate) if stream != null else 0
+
+
+func _feed_wet(count: int, buffered_before: int) -> void:
+	## Отдать посылы орбит их шинам — ровно те отсчёты, что легли в сухой выход.
+	for id in _engine.orbit_ids():
+		var w: Dictionary = _wet.get(id, {})
+		if w.is_empty():
+			w = _make_wet(int(id), buffered_before)
+			_wet[id] = w
+		_apply_wet_settings(w, _engine.orbit_settings(int(id)))
+		var room: PackedFloat32Array = _engine.orbit_send(int(id), "room")
+		var echo: PackedFloat32Array = _engine.orbit_send(int(id), "delay")
+		var rp := (w["room_player"] as AudioStreamPlayer).get_stream_playback() as AudioStreamGeneratorPlayback
+		var dp := (w["delay_player"] as AudioStreamPlayer).get_stream_playback() as AudioStreamGeneratorPlayback
+		var n := mini(count, room.size())
+		for i in n:
+			if rp != null:
+				rp.push_frame(Vector2(room[i] * SEND_TRIM, room[i] * SEND_TRIM))
+			if dp != null:
+				dp.push_frame(Vector2(echo[i], echo[i]))
+
+
+func _make_wet(id: int, buffered_before: int) -> Dictionary:
+	## Две шины на орбиту: зал и эхо. Обе сводятся в [member bus].
+	var stem := "%s·%d·orbit%d" % [name, get_instance_id() % 10000, id]
+	var made := {}
+	for kind in ["room", "delay"]:
+		var idx := AudioServer.bus_count
+		AudioServer.add_bus(idx)
+		AudioServer.set_bus_name(idx, stem + "·" + kind)
+		AudioServer.set_bus_send(idx, bus)
+		var fx: AudioEffect
+		if kind == "room":
+			var rev := AudioEffectReverb.new()
+			rev.dry = 0.0
+			rev.wet = 1.0
+			rev.spread = 1.0
+			rev.hipass = 0.0
+			fx = rev
+		else:
+			var dl := AudioEffectDelay.new()
+			dl.dry = 0.0
+			# Как `FeedbackDelayNode` в Strudel: первое эхо — в полный голос
+			# (отвод 1 на времени задержки, 0 дБ), дальше — петля с весом
+			# `delayfeedback`. Замерено: удар 0.80 даёт 0.80 → 0.40 → 0.20 при
+			# обратной связи 0.5, ровно как в оригинале. Без отвода петля
+			# штатного узла не отдаёт наружу ничего.
+			dl.tap1_active = true
+			dl.tap1_level_db = 0.0
+			dl.tap1_pan = 0.0
+			dl.tap2_active = false
+			dl.feedback_active = true
+			dl.feedback_lowpass = 20000.0
+			fx = dl
+		AudioServer.add_bus_effect(idx, fx)
+		var stream := AudioStreamGenerator.new()
+		var main := _player.stream as AudioStreamGenerator
+		stream.mix_rate = main.mix_rate
+		stream.buffer_length = main.buffer_length
+		var p := AudioStreamPlayer.new()
+		p.name = "Strudel%s%d" % [kind.capitalize(), id]
+		p.stream = stream
+		p.bus = StringName(stem + "·" + kind)
+		p.volume_db = volume_db
+		add_child(p)
+		p.play()
+		# 🔴 ВЫРАВНИВАНИЕ ПО ВРЕМЕНИ. Сухой выход к этому моменту уже держит в
+		# буфере до ста миллисекунд, а новый проигрыватель — ничего: без
+		# подкладки тишины зал шёл бы ВПЕРЕДИ прямого звука.
+		var pb := p.get_stream_playback() as AudioStreamGeneratorPlayback
+		if pb != null:
+			for i in buffered_before:
+				pb.push_frame(Vector2.ZERO)
+		made[kind + "_bus"] = idx
+		made[kind + "_fx"] = fx
+		made[kind + "_player"] = p
+	return made
+
+
+func _apply_wet_settings(w: Dictionary, s: Dictionary) -> void:
+	if s.is_empty() or w.get("settings", {}) == s:
+		return
+	w["settings"] = s.duplicate()
+	var rev := w["room_fx"] as AudioEffectReverb
+	# `roomsize` в Strudel — время затухания до −60 дБ. Штатный зал — по
+	# Фридверу: отклик гребёнки g = 0.7 + 0.28·room_size, а время затухания
+	# T = −0.0952 / log10(g) (длина гребёнок около 32 мс). Отсюда обратно:
+	var decay := maxf(float(s["decay"]), 0.05)
+	var g := pow(10.0, -0.0952 / decay)
+	# 🔴 ЧИСЛА НИЖЕ — ИЗ СВЕРКИ С ЗАПИСЬЮ STRUDEL, А НЕ ИЗ ГОЛОВЫ. Эталон:
+	# одна нота рояля, `room(0.36).roomsize(4).roomlp(4200)`, записана в Булке
+	# и здесь (`tools/record_live.gd`). Ранние отражения у Freeverb плотнее, чем
+	# у шумового импульса оригинала, поэтому посыл в зал ослаблен вдвое
+	# (SEND_TRIM), а размер сдвинут на +0.06 — тогда хвост 1.5–4 с сходится в
+	# 0.0 дБ, прямой звук в −0.5 дБ, тело 0.2–1 с остаётся на +4 дБ громче.
+	# Без сдвига и трима было: хвост −1.9, тело +6.5. Свой зал давал −8.7.
+	rev.room_size = clampf((g - 0.7) / 0.28 + 0.06, 0.0, 1.0)
+	# `roomlp` — потолок хвоста; у штатного зала это глушение верхов 0…1.
+	# Делитель подобран той же сверкой: при 12000 полоса 2–5 кГц выходила на
+	# 8 дБ темнее оригинала, при 40000 — на 5.7; глубже Freeverb не пускает.
+	var lp := float(s["lp_start"])
+	rev.damping = clampf(1.0 - lp / 40000.0, 0.0, 1.0) if lp > 0.0 else 0.0
+	# `roomfade` — наплыв импульса; ближайшее у штатного — предзадержка.
+	rev.predelay_msec = clampf(float(s["fade"]) * 500.0, 0.0, 500.0)
+	rev.predelay_feedback = 0.0
+
+	var dl := w["delay_fx"] as AudioEffectDelay
+	var fb := clampf(float(s["delay_feedback"]), 0.0, 0.98)
+	dl.feedback_delay_ms = clampf(float(s["delay_time"]) * 1000.0, 1.0, 1500.0)
+	dl.tap1_delay_ms = dl.feedback_delay_ms
+	dl.feedback_level_db = linear_to_db(maxf(fb, 0.001))
+
+
+func _drop_wet() -> void:
+	## Снять свои шины: чужих не трогаем, свои за собой убираем.
+	for id in _wet:
+		var w: Dictionary = _wet[id]
+		for kind in ["room", "delay"]:
+			var p := w.get(kind + "_player") as AudioStreamPlayer
+			if p != null:
+				p.stop()
+				p.queue_free()
+	# Индексы шин плывут при удалении — снимаем по имени, с конца.
+	var names: Array = []
+	for id in _wet:
+		var w: Dictionary = _wet[id]
+		for kind in ["room", "delay"]:
+			names.append(AudioServer.get_bus_name(int(w[kind + "_bus"])))
+	for i in range(AudioServer.bus_count - 1, 0, -1):
+		if names.has(AudioServer.get_bus_name(i)):
+			AudioServer.remove_bus(i)
+	_wet.clear()
+
+
 func _exit_tree() -> void:
+	_drop_wet()
 	# 🔴 ПОТОК ПРОГРЕВА ГАСИТСЯ ПРИ ВЫХОДЕ. Он стартует вместе с музыкой, но
 	# при закрытии игры `stop()` зовут не всегда — движок тогда ругается
 	# `~Thread` и роняет утечку объектов на выходе.
@@ -216,6 +371,7 @@ func restart_clock() -> void:
 func stop() -> void:
 	## Останавливает музыку и глушит голоса.
 	_playing = false
+	_drop_wet()
 	if _engine.bank != null and _engine.bank.has_method("prime_stop"):
 		_engine.bank.prime_stop()
 	if _player != null:
@@ -373,7 +529,11 @@ func _process(_delta: float) -> void:
 		return
 	var playback := _player.get_stream_playback()
 	if playback is AudioStreamGeneratorPlayback:
-		_engine.fill(playback)
+		var gen := playback as AudioStreamGeneratorPlayback
+		var buffered_before: int = _capacity() - gen.get_frames_available()
+		var n: int = _engine.fill(gen)
+		if native_effects and n > 0:
+			_feed_wet(n, buffered_before)
 	# О перегрузе говорим ОДИН раз: иначе лог зальёт.
 	if not _warned_clip and _engine.clipped_frames > int(_engine.mix_rate * 0.05):
 		_warned_clip = true

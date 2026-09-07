@@ -42,6 +42,11 @@ var clipped_frames := 0
 ## Мягкое ограничение на выходе. Выключено по умолчанию: с ним звук перестаёт
 ## быть побитово тем же, что в Strudel, а это цена сверки.
 var master_limiter := false
+## Зал и эхо орбит считает НЕ движок, а тот, кто его слушает: движок тогда
+## лишь копит посылы (`orbit_send`), а сводит их штатный узел Godot на шине.
+## Так устроен и Strudel — зал у него нативный узел браузера, а не скрипт.
+## Выключено — зал и эхо считаются здесь, как в оффлайн-рендере, где шин нет.
+var wet_external := false
 
 var _voices: Array[StrudelVoice] = []
 var _frames_written := 0
@@ -330,14 +335,44 @@ func trigger(value: Dictionary, length: float = 0.25) -> void:
 	_instant.append({"value": value, "length": maxf(length, 0.01)})
 
 
-func fill(playback: AudioStreamGeneratorPlayback) -> void:
+func fill(playback: AudioStreamGeneratorPlayback) -> int:
+	## Досчитать звук до полного буфера. → сколько отсчётов легло.
 	var available := playback.get_frames_available()
 	if available <= 0:
-		return
+		return 0
 	_render(available)
 	for i in available:
 		playback.push_frame(Vector2(_left[i], _right[i]))
 	_frames_written += available
+	return available
+
+
+func orbit_ids() -> Array:
+	## Номера орбит, которые уже завелись.
+	return _orbits.keys()
+
+
+func orbit_send(index: int, kind: String) -> PackedFloat32Array:
+	## Посыл орбиты за последний блок: "room" или "delay". Только при
+	## [member wet_external] — иначе посылы уже сведены в выход.
+	var orb: Dictionary = _orbits.get(index, {})
+	return orb.get(kind, PackedFloat32Array())
+
+
+func orbit_settings(index: int) -> Dictionary:
+	## Настройки зала и эха орбиты — те, что пришли из событий.
+	var orb: Dictionary = _orbits.get(index, {})
+	if orb.is_empty():
+		return {}
+	var rev := orb["reverb"] as StrudelReverb
+	return {
+		"decay": rev.decay_time,
+		"fade": rev.fade_in,
+		"lp_start": rev.lp_start,
+		"lp_end": rev.lp_end,
+		"delay_time": float(orb["time"]),
+		"delay_feedback": float(orb["feedback"]),
+	}
 
 
 func render_block(count: int) -> Array:
@@ -417,6 +452,9 @@ func _render(count: int) -> void:
 	# Поэтому: пришёл звук — заводим хвост на TAIL_SEC; тишина — доигрываем
 	# его и только потом засыпаем.
 	for key in _orbits:
+		if wet_external:
+			# Посылы уже лежат в буферах орбиты — их заберёт слушатель.
+			break
 		var orb2: Dictionary = _orbits[key]
 		var has_in := false
 		var in_room: PackedFloat32Array = orb2["room"]
@@ -462,8 +500,13 @@ func _mix_delay(orb: Dictionary, count: int) -> void:
 		var read := (head - offset + size) % size
 		var echoed: float = line[read]
 		line[head] = bus[i] + echoed * fb
-		_left[i] += echoed * 0.5
-		_right[i] += echoed * 0.5
+		# 🔴 ПЕРВОЕ ЭХО — В ПОЛНЫЙ ГОЛОС. В оригинале (`feedbackdelay.mjs`)
+		# выход идёт через `delayGain` с весом `wet = 1`, а ослабление
+		# `feedback` живёт только в петле. Здесь стояло `× 0.5`, взятое
+		# ниоткуда: замерено, ряд эхо выходил 0.40 → 0.20 → 0.10 вместо
+		# 0.80 → 0.40 → 0.20 при ударе 0.80 и обратной связи 0.5.
+		_left[i] += echoed
+		_right[i] += echoed
 		head = (head + 1) % size
 	orb["head"] = head
 
