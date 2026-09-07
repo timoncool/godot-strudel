@@ -211,15 +211,6 @@ static func configure(voice: StrudelVoice, value: Dictionary, length: float,
 	voice.sample_rate = float(picked["rate"])
 	# Растяжка по высоте у многосэмплированных складывается со .speed().
 	voice.speed = voice.speed * float(picked.get("speed", 1.0))
-	# 🔴 ВОЛНОВЫЕ ТАБЛИЦЫ. В Strudel имя на `wt_` — это осциллятор из одного
-	# периода (`superdough/sampler.mjs`: `key.startsWith("wt_")` -> registerWaveTable),
-	# который крутит период по кругу и питчит его к ноте. Файл dough-waveforms —
-	# один цикл (~13 мс), и без петли он играл 13 мс и сыпался. Зацикливаем весь
-	# буфер: питч уже даёт `speed` (файл размечен нотой), выходит ровный тон.
-	if sound.begins_with("wt_") and not voice.sample.is_empty():
-		voice.sample_loop = true
-		voice.sample_loop_begin = 0.0
-		voice.sample_loop_end = float(voice.sample.size())
 
 
 static func _midi_of(value: Dictionary) -> float:
