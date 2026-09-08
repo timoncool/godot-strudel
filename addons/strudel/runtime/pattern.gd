@@ -58,6 +58,18 @@ static func set_string_parser(parser: Callable) -> void:
 ## Срыв запроса: причина и глубина вложенности.
 static var _fault := ""
 static var _query_depth := 0
+## 🔴 ОДИН ЗАМОК НА ВСЕ ОПРОСЫ. У запроса есть общее изменяемое состояние —
+## эти два поля, словарь `_timelines` ниже, память `voicing` в tonal, — и оно
+## трогается в КАЖДОМ опросе. Стоит двум потокам опросить паттерны разом
+## (рабочий поток движка доигрывает старый паттерн, а главный уже спрашивает
+## новый после `set_pattern`), как два потока пишут в один Dictionary — это
+## неопределённое поведение: клинч или падение без единой строки в логе. Игра
+## именно так и висла намертво на плотном треке через минуту-другую.
+## Замок реентерабельный: вложенные опросы одного потока проходят свободно.
+static var _query_lock := Mutex.new()
+## Кто сейчас держит замок опроса: для сторожа. Пишется ТОЛЬКО под замком —
+## статическая строка, в которую пишут два потока разом, роняет процесс.
+static var lock_holder := ""
 
 
 static func fault(message: String) -> void:
@@ -76,14 +88,21 @@ static func fault(message: String) -> void:
 func query_arc(from_time: Variant, to_time: Variant, controls: Dictionary = {}) -> Array:
 	## Спросить события на отрезке. Точка входа для всего снаружи.
 	var span := StrudelTimeSpan.new(StrudelFraction.of(from_time), StrudelFraction.of(to_time))
+	_query_lock.lock()
+	lock_holder = str(OS.get_thread_caller_id())
 	var outer := _query_depth == 0
 	if outer:
 		_fault = ""
 	_query_depth += 1
 	var haps: Array = query.call(StrudelState.new(span, controls))
 	_query_depth -= 1
-	if outer and _fault != "":
-		push_warning("Strudel: запрос сорвался — %s" % _fault)
+	var failed := outer and _fault != ""
+	var why := _fault
+	if outer:
+		lock_holder = ""
+	_query_lock.unlock()
+	if failed:
+		push_warning("Strudel: запрос сорвался — %s" % why)
 		return []
 	return haps
 

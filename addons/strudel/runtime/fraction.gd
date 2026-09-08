@@ -21,7 +21,18 @@ var n: int = 0
 ## Знаменатель, всегда > 0.
 var d: int = 1
 
-const _FAREY_N := 10000000
+## 🔴 ПРЕДЕЛ ЗНАМЕНАТЕЛЯ ПРИ ПЕРЕВОДЕ ИЗ FLOAT — 2^20, А НЕ ДЕСЯТЬ МИЛЛИОНОВ.
+## Начало окна опроса — произвольный float из счётчика отсчётов, и при пределе
+## в десять миллионов он давал дроби вроде 121676200/1715861. Дальше `late(0.004)`
+## и шестнадцатые мини-нотации множили знаменатели, произведения в `add`
+## вылетали за 2^63, `next_sam()` переставал быть больше начала — и
+## `span_cycles` крутился вечно. Так игра висла намертво через минуту: в
+## Strudel дроби на BigInt и не переполняются, у нас int64. При 2^20 точность
+## перевода — миллионная круга, около микросекунды на любом темпе: ниже одного
+## отсчёта. Сверх того каждая операция проверяет, влезает ли результат.
+const _FAREY_N := 1048576
+## Порог, за которым произведение двух целых уже не помещается в int64 с запасом.
+const _SAFE := 4.0e18
 
 
 func _init(numerator: Variant = 0, denominator: Variant = null) -> void:
@@ -211,21 +222,37 @@ static func _from_string(text: String) -> _Parts:
 func add(other: Variant) -> StrudelFraction:
 	if other is StrudelFraction:
 		var f: StrudelFraction = other
-		if d == f.d:
-			return _make(s * n + f.s * f.n, d)
-		return _make(s * n * f.d + f.s * f.n * d, d * f.d)
+		return _add_parts(f.s, f.n, f.d, 1)
 	var o := _to_frac(other)
-	return _make(s * n * o.d + o.s * o.n * d, d * o.d)
+	return _add_parts(o.s, o.n, o.d, 1)
+
+
+func _add_parts(os_: int, on: int, od: int, sign_mul: int) -> StrudelFraction:
+	## Сумма (или разность при sign_mul = −1) через НОК знаменателей, с проверкой
+	## на переполнение. Не влезает — считаем в float и округляем к дроби с
+	## ограниченным знаменателем: ошибка меньше микросекунды, а зависания нет.
+	if d == od:
+		var num := s * n + sign_mul * os_ * on
+		return _make(num, d)
+	var g := _gcd_int(d, od)
+	var m1 := od / g
+	var m2 := d / g
+	if not (_fits(n, m1) and _fits(on, m2) and _fits(d, m1)):
+		return StrudelFraction.new(to_float() + float(sign_mul) * (float(os_ * on) / float(od)))
+	var a := n * m1
+	var b := on * m2
+	if s == sign_mul * os_:
+		if not _fits_sum(a, b):
+			return StrudelFraction.new(to_float() + float(sign_mul) * (float(os_ * on) / float(od)))
+	return _make(s * a + sign_mul * os_ * b, d * m1)
 
 
 func sub(other: Variant) -> StrudelFraction:
 	if other is StrudelFraction:
 		var f: StrudelFraction = other
-		if d == f.d:
-			return _make(s * n - f.s * f.n, d)
-		return _make(s * n * f.d - f.s * f.n * d, d * f.d)
+		return _add_parts(f.s, f.n, f.d, -1)
 	var o := _to_frac(other)
-	return _make(s * n * o.d - o.s * o.n * d, d * o.d)
+	return _add_parts(o.s, o.n, o.d, -1)
 
 
 func mul(other: Variant) -> StrudelFraction:
@@ -234,10 +261,14 @@ func mul(other: Variant) -> StrudelFraction:
 		var f: StrudelFraction = other
 		var h1 := _gcd_int(n, f.d)
 		var h2 := _gcd_int(f.n, d)
+		if not (_fits(n / h1, f.n / h2) and _fits(d / h2, f.d / h1)):
+			return StrudelFraction.new(to_float() * f.to_float())
 		return _make_signed(s * f.s, (n / h1) * (f.n / h2), (d / h2) * (f.d / h1))
 	var o := _to_frac(other)
 	var g1 := _gcd_int(n, o.d)
 	var g2 := _gcd_int(o.n, d)
+	if not (_fits(n / g1, o.n / g2) and _fits(d / g2, o.d / g1)):
+		return StrudelFraction.new(to_float() * (float(o.s * o.n) / float(o.d)))
 	return _make_signed(s * o.s, (n / g1) * (o.n / g2), (d / g2) * (o.d / g1))
 
 
@@ -249,6 +280,8 @@ func div(other: Variant) -> StrudelFraction:
 			return StrudelFraction.new(0)
 		var h1 := _gcd_int(n, f.n)
 		var h2 := _gcd_int(f.d, d)
+		if not (_fits(n / h1, f.d / h2) and _fits(d / h2, f.n / h1)):
+			return StrudelFraction.new(to_float() / f.to_float())
 		return _make_signed(s * f.s, (n / h1) * (f.d / h2), (d / h2) * (f.n / h1))
 	var o := _to_frac(other)
 	if o.n == 0:
@@ -256,7 +289,18 @@ func div(other: Variant) -> StrudelFraction:
 		return StrudelFraction.new(0)
 	var g1 := _gcd_int(n, o.n)
 	var g2 := _gcd_int(o.d, d)
+	if not (_fits(n / g1, o.d / g2) and _fits(d / g2, o.n / g1)):
+		return StrudelFraction.new(to_float() / (float(o.s * o.n) / float(o.d)))
 	return _make_signed(s * o.s, (n / g1) * (o.d / g2), (d / g2) * (o.n / g1))
+
+
+static func _fits(a: int, b: int) -> bool:
+	## Помещается ли произведение в int64 с запасом.
+	return absf(float(a)) * absf(float(b)) < _SAFE
+
+
+static func _fits_sum(a: int, b: int) -> bool:
+	return absf(float(a)) + absf(float(b)) < _SAFE
 
 
 static func _make(num: int, den: int) -> StrudelFraction:

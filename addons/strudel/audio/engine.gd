@@ -47,6 +47,10 @@ var master_limiter := false
 ## Так устроен и Strudel — зал у него нативный узел браузера, а не скрипт.
 ## Выключено — зал и эхо считаются здесь, как в оффлайн-рендере, где шин нет.
 var wet_external := false
+## Где сейчас главный поток внутри движка. Пишется одним словом на стадию и
+## читается сторожем из другого потока: когда игра виснет намертво, лог
+## обрывается молча, и только эта метка говорит, В КАКОМ МЕСТЕ встали.
+var stage := "idle"
 
 var _voices: Array[StrudelVoice] = []
 var _frames_written := 0
@@ -164,6 +168,8 @@ func set_pattern(new_pattern: StrudelPattern) -> void:
 	_scheduled.clear()
 	_sched_cycle_end = cycle_at_frame(_frames_written)
 	_sched_frame_end = _frames_written
+	# Новый паттерн — сразу рабочему, чтобы к следующему `fill` был ответ.
+	_q_request(_sched_cycle_end, _sched_cycle_end + _BLOCK_CYCLES)
 
 
 func cycle_at_frame(frame: int) -> float:
@@ -205,16 +211,36 @@ const _FIRST_BLOCK_CYCLES := 0.125
 ##
 ## Смена паттерна или темпа поднимает поколение: блок, посчитанный по
 ## старому, выбрасывается, и первый блок нового считается на месте.
-var _q_task := -1
-var _q_gen := 0
+## 🔴 ОПРОС ПАТТЕРНА — В СВОЁМ ПОТОКЕ, И ГЛАВНЫЙ ЕГО НИКОГДА НЕ ЖДЁТ.
+## Раньше опрос уходил задачей в `WorkerThreadPool`, а главный поток ЖДАЛ её
+## (`wait_for_task_completion`) перед каждым блоком. На плотном треке это
+## стояние в кадре, а при подмене паттерна — ещё и два опроса разом (см. замок
+## в `StrudelPattern.query_arc`). Теперь: постоянный поток, один слот заказа,
+## один слот ответа; главный лишь кладёт заказ и забирает ответ, если он готов.
+## Не готов — события подъедут следующим `fill` (опоздавшее играется сразу,
+## это уже умеет `_render`). Синхронно главный опрашивает только когда впереди
+## головки воспроизведения ПУСТО — при старте и после смены паттерна.
+var _q_thread: Thread = null
+var _q_wake := Semaphore.new()
+var _q_quit := false
 var _q_mutex := Mutex.new()
-var _q_c0 := 0.0
-var _q_c1 := 0.0
-var _q_gen_done := -1
-var _q_out: Array = []
+var _q_gen := 0
+var _q_req: Dictionary = {}
+var _q_res: Dictionary = {}
+## Рабочий сигналит сюда о каждом готовом ответе. На это ждёт ТОЛЬКО
+## оффлайн-рендер: там нет кадров, и подождать блок дешевле, чем считать его
+## вдвоём. В реальном времени (`fill`) не ждёт никто и никогда.
+var _q_done := Semaphore.new()
+var _q_busy_c0 := -1.0
+var _realtime := false
+## Больше этого звука за один `fill` не считаем: после долгой просадки кадра
+## буфер догоняется в несколько вызовов, а не одним рывком на полкадра.
+const MAX_FILL_SEC := 0.25
 
 
 func _query_block(pat: StrudelPattern, c0: float, c1: float) -> Array:
+	if OS.get_thread_caller_id() == OS.get_main_thread_id():
+		stage = "query:main %.3f-%.3f" % [c0, c1]
 	## События с началом внутри [c0, c1): начало в циклах, длина в циклах.
 	var out: Array = []
 	# 🔴 ТЕМП ЕДЕТ В ЗАПРОС. `fit()`, `loopAt()` и прочие «уложить в круг»
@@ -231,22 +257,51 @@ func _query_block(pat: StrudelPattern, c0: float, c1: float) -> Array:
 	return out
 
 
-func _q_worker(pat: StrudelPattern, c0: float, c1: float, gen: int) -> void:
-	var res := _query_block(pat, c0, c1)
-	_q_mutex.lock()
-	if gen == _q_gen:
-		_q_out = res
-		_q_c0 = c0
-		_q_c1 = c1
-		_q_gen_done = gen
-	_q_mutex.unlock()
+func _q_loop() -> void:
+	## Тело потока опроса: ждать заказ, посчитать, положить ответ.
+	while true:
+		_q_wake.wait()
+		if _q_quit:
+			return
+		_q_mutex.lock()
+		var req := _q_req
+		_q_req = {}
+		if not req.is_empty():
+			_q_busy_c0 = float(req["c0"])
+		_q_mutex.unlock()
+		if req.is_empty():
+			continue
+		var haps := _query_block(req["pat"], float(req["c0"]), float(req["c1"]))
+		_q_mutex.lock()
+		# Ответ на устаревший заказ (паттерн сменился) выбрасывается.
+		if int(req["gen"]) == _q_gen:
+			_q_res = {"c0": req["c0"], "c1": req["c1"], "haps": haps}
+		_q_busy_c0 = -1.0
+		_q_mutex.unlock()
+		_q_done.post()
+
+
+func _q_start() -> void:
+	if _q_thread != null:
+		return
+	_q_quit = false
+	_q_thread = Thread.new()
+	_q_thread.start(_q_loop)
 
 
 func _q_join() -> void:
-	## Дождаться рабочего, если он ещё считает.
-	if _q_task >= 0:
-		WorkerThreadPool.wait_for_task_completion(_q_task)
-		_q_task = -1
+	## Погасить поток опроса. Единственное место, где его ждут, — выключение.
+	if _q_thread == null:
+		return
+	_q_quit = true
+	_q_wake.post()
+	_q_thread.wait_to_finish()
+	_q_thread = null
+	_q_mutex.lock()
+	_q_req = {}
+	_q_res = {}
+	_q_busy_c0 = -1.0
+	_q_mutex.unlock()
 
 
 func shutdown() -> void:
@@ -258,30 +313,53 @@ func shutdown() -> void:
 
 func _q_invalidate() -> void:
 	## Паттерн или темп сменились: посчитанное впрок больше не годится.
+	_q_mutex.lock()
 	_q_gen += 1
+	_q_req = {}
+	_q_res = {}
+	_q_mutex.unlock()
 
 
 func _q_request(c0: float, c1: float) -> void:
-	if _q_task >= 0 or pattern == null:
+	if pattern == null:
 		return
-	_q_task = WorkerThreadPool.add_task(_q_worker.bind(pattern, c0, c1, _q_gen),
-		false, "Strudel: опрос паттерна")
+	_q_start()
+	_q_mutex.lock()
+	var busy := not _q_req.is_empty() or _q_busy_c0 >= 0.0 \
+		or (not _q_res.is_empty() and is_equal_approx(float(_q_res["c0"]), c0))
+	if not busy:
+		_q_req = {"pat": pattern, "c0": c0, "c1": c1, "gen": _q_gen}
+	_q_mutex.unlock()
+	if not busy:
+		_q_wake.post()
 
 
 func _q_take(c0: float, c1: float) -> Variant:
 	## Готовый блок ровно на [c0, c1) нынешнего поколения, иначе null.
-	if _q_task < 0:
+	if _q_thread == null:
 		return null
-	_q_join()
+	stage = "sched:take"
+	if not _realtime:
+		# Оффлайн: заказ на этот блок в работе — дождаться, а не считать вдвоём.
+		while true:
+			_q_mutex.lock()
+			var pending := _q_res.is_empty() and (is_equal_approx(_q_busy_c0, c0) \
+				or (not _q_req.is_empty() and is_equal_approx(float(_q_req["c0"]), c0)))
+			_q_mutex.unlock()
+			if not pending:
+				break
+			_q_done.wait()
 	_q_mutex.lock()
-	var ok := _q_gen_done == _q_gen and is_equal_approx(_q_c0, c0) \
-		and is_equal_approx(_q_c1, c1)
-	var res: Array = _q_out if ok else []
+	var ok := not _q_res.is_empty() and is_equal_approx(float(_q_res["c0"]), c0) \
+		and is_equal_approx(float(_q_res["c1"]), c1)
+	var res: Array = _q_res["haps"] if ok else []
+	if ok:
+		_q_res = {}
 	_q_mutex.unlock()
 	return res if ok else null
 
 
-func _ensure_scheduled(until_frame: int) -> void:
+func _ensure_scheduled(until_frame: int, count_hint: int = 0) -> void:
 	if pattern == null:
 		return
 	var guard := 0
@@ -294,11 +372,15 @@ func _ensure_scheduled(until_frame: int) -> void:
 		if got != null:
 			haps = got
 		else:
-			# Впрок ничего нет (первый блок, или паттерн только что сменился):
-			# считаем на месте, но КОРОТКИЙ кусок — он влезает в кадр. Рабочий
-			# к этому моменту уже остановлен: опрос не ведётся вдвоём.
-			_q_join()
+			# Ответа нет. Синхронно считаем ТОЛЬКО если впереди головки
+			# воспроизведения уже пусто — старт, смена паттерна, оффлайн.
+			# Иначе не ждём: заказываем и выходим, события догонят следующим
+			# `fill` (опоздавшее играется сразу).
+			var starving := (not _realtime) or _sched_frame_end <= _frames_written + count_hint
+			if not starving:
+				break
 			c1 = c0 + _FIRST_BLOCK_CYCLES
+			stage = "sched:sync-query"
 			haps = _query_block(pattern, c0, c1)
 		for h in haps:
 			_scheduled.append({
@@ -308,8 +390,10 @@ func _ensure_scheduled(until_frame: int) -> void:
 			})
 		_sched_cycle_end = c1
 		_sched_frame_end = frame_at_cycle(c1)
+	stage = "sched:sort(%d)" % _scheduled.size()
 	_scheduled.sort_custom(func(a, b): return int(a["frame"]) < int(b["frame"]))
 	# Следующий блок — в фон, пока этот звучит.
+	stage = "sched:request"
 	_q_request(_sched_cycle_end, _sched_cycle_end + _BLOCK_CYCLES)
 
 
@@ -343,10 +427,18 @@ func fill(playback: AudioStreamGeneratorPlayback) -> int:
 	var available := playback.get_frames_available()
 	if available <= 0:
 		return 0
+	# 🔴 ЦЕНА ОДНОГО ВЫЗОВА ОГРАНИЧЕНА. После просадки кадра буфер просит
+	# сразу много; отдать всё одним рывком — значит съесть следующий кадр и
+	# уйти в штопор. Догоняем частями.
+	available = mini(available, int(MAX_FILL_SEC * mix_rate))
+	_realtime = true
+	stage = "fill:render(%d)" % available
 	_render(available)
+	stage = "fill:push"
 	for i in available:
 		playback.push_frame(Vector2(_left[i], _right[i]))
 	_frames_written += available
+	stage = "fill:done"
 	return available
 
 
@@ -404,7 +496,7 @@ func _render(count: int) -> void:
 		_left[i] = 0.0
 		_right[i] = 0.0
 
-	_ensure_scheduled(_frames_written + count + int(lookahead * mix_rate))
+	_ensure_scheduled(_frames_written + count + int(lookahead * mix_rate), count)
 
 	# Запуск событий, попавших в этот буфер, — на ТОЧНЫЙ отсчёт.
 	while not _scheduled.is_empty():
@@ -440,10 +532,12 @@ func _render(count: int) -> void:
 			rb[i] = 0.0
 			db[i] = 0.0
 
+	stage = "render:voices"
 	for v in _voices:
 		if v.active:
 			var orb := _orbit(v.orbit)
 			v.render(_left, _right, 0, count, orb["room"], orb["delay"])
+	stage = "render:orbits"
 
 	# 🔴 МОЛЧАЩАЯ ОРБИТА НЕ СЧИТАЕТСЯ. Зал и эхо крутились каждый буфер, даже
 	# когда на орбиту давно ничего не приходит: замерено — движок, у которого
@@ -520,7 +614,9 @@ func _trigger(value: Variant, length: float, offset_in_buffer: int, count: int) 
 	var voice := _take_voice()
 	if voice == null:
 		return
+	stage = "trigger:configure(%s)" % str((value as Dictionary).get("s", "?"))
 	StrudelVoiceBuilder.configure(voice, value, length, bank, mix_rate, soundfont, gm_fonts, cps)
+	stage = "trigger:orbit"
 	# Настройки эха и зала берёт ПОСЛЕДНЕЕ пришедшее на орбиту событие —
 	# так же, как узлы в Strudel переиспользуются на орбиту.
 	var dict: Dictionary = value
