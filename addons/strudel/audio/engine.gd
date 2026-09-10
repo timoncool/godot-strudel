@@ -641,7 +641,13 @@ func _trigger(value: Variant, length: float, offset_in_buffer: int, count: int) 
 	# иначе доли дрожали бы на размер буфера — это слышно как неровный ритм.
 	voice.start_delay = clampi(offset_in_buffer, 0, count)
 	played_events += 1
-	event_started.emit(value, float(offset_in_buffer) / mix_rate)
+	# 🔴 СИГНАЛ — ТОЛЬКО НА ГЛАВНЫЙ ПОТОК. Синтез теперь идёт в своём потоке
+	# (0.2.8), а слушатели сигнала (игра ведёт по нему отклики и партии) живут
+	# на главном потоке и трогают сцену. Прямой `emit` из потока синтеза
+	# выполнял бы их обработчик на чужом потоке — тот падал на первом же
+	# обращении к дереву, рендер срывался, и звук пропадал совсем. `call_deferred`
+	# складывает эмиссию в очередь главного потока — как было до потока синтеза.
+	call_deferred("emit_signal", "event_started", value, float(offset_in_buffer) / mix_rate)
 
 
 func _take_voice() -> StrudelVoice:
@@ -651,7 +657,8 @@ func _take_voice() -> StrudelVoice:
 	# 🔴 Вытеснение ЯВНОЕ и считается. Молчаливая кража голоса — то, из-за
 	# чего потом ищут несуществующий баг: ноты пропадают без следа.
 	stolen_voices += 1
-	voices_exhausted.emit(stolen_voices, max_voices)
+	# На главный поток, по той же причине, что и event_started.
+	call_deferred("emit_signal", "voices_exhausted", stolen_voices, max_voices)
 	var oldest: StrudelVoice = _voices[0]
 	for v in _voices:
 		if v._pos > oldest._pos:
