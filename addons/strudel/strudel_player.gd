@@ -53,7 +53,9 @@ signal voices_exhausted(total_stolen: int, limit: int)
 	set(value):
 		cycles_per_minute = value
 		if _engine != null and not _cps_from_code:
+			_engine_lock.lock()
 			_engine.set_cps(value / 60.0)
+			_engine_lock.unlock()
 
 ## Зал и эхо орбит — на ШТАТНЫХ узлах Godot: под каждую орбиту заводятся
 ## две шины с `AudioEffectReverb` и `AudioEffectDelay`, посылы идут туда, а
@@ -117,6 +119,24 @@ var _playing := false
 var _cps_from_code := false
 var _last_error := ""
 var _warned_clip := false
+
+## 🔴 СИНТЕЗ ЗВУКА — В ОТДЕЛЬНОМ ПОТОКЕ, ГЛАВНЫЙ ПОТОК ЕГО НЕ КАСАЕТСЯ.
+## Раньше весь синтез (`fill` → `render` каждого голоса) считался в `_process`,
+## то есть на ГЛАВНОМ потоке. На плотном треке это 30–85% времени кадра —
+## главный поток вставал, окно и игра замирали («зависание»). Опрос паттерна
+## уехал на свой поток ещё в 0.2.7, а синтез оставался здесь. Теперь буфер
+## генератора наполняет отдельный поток, а главный лишь заводит шины зала
+## (их нельзя трогать не из главного) и следит за перегрузом.
+var _fill_thread: Thread = null
+var _fill_quit := false
+## Один замок между потоком синтеза и правками движка с главного потока
+## (`set_pattern`, `set_cps`, `reset_clock`, `shutdown`): они не должны идти
+## одновременно с `fill`.
+var _engine_lock := Mutex.new()
+## Доступ к словарю шин зала из обоих потоков.
+var _wet_lock := Mutex.new()
+## Орбиты, которым поток синтеза попросил завести шину: заводит главный поток.
+var _pending_wet: Dictionary = {}
 
 
 func _ready() -> void:
@@ -190,6 +210,12 @@ func play(new_code: String = "") -> bool:
 	if not _player.playing:
 		_player.play()
 	_playing = true
+	# Поток синтеза: наполняет буфер генератора, пока главный поток занят
+	# отрисовкой и игрой. Заводится один раз.
+	if _fill_thread == null:
+		_fill_quit = false
+		_fill_thread = Thread.new()
+		_fill_thread.start(_fill_loop)
 	# Сэмплы разбираются наперёд, чтобы первая нота каждой высоты не вставала
 	# посреди фразы.
 	if _engine.bank != null and _engine.bank.has_method("prime_async"):
@@ -221,12 +247,20 @@ func _capacity() -> int:
 
 func _feed_wet(count: int, buffered_before: int) -> void:
 	## Отдать посылы орбит их шинам — ровно те отсчёты, что легли в сухой выход.
+	## Зовётся ИЗ ПОТОКА СИНТЕЗА: только `push_frame` (он потокобезопасен). Шину
+	## заводит и её узлы настраивает главный поток — здесь лишь просьба завести.
 	for id in _engine.orbit_ids():
+		_wet_lock.lock()
 		var w: Dictionary = _wet.get(id, {})
+		_wet_lock.unlock()
 		if w.is_empty():
-			w = _make_wet(int(id), buffered_before)
-			_wet[id] = w
-		_apply_wet_settings(w, _engine.orbit_settings(int(id)))
+			# Шины ещё нет — просим главный поток завести и пропускаем орбиту до
+			# следующего блока (пара блоков без зала на старте не слышна).
+			_wet_lock.lock()
+			if not _pending_wet.has(id):
+				_pending_wet[id] = buffered_before
+			_wet_lock.unlock()
+			continue
 		var room: PackedFloat32Array = _engine.orbit_send(int(id), "room")
 		var echo: PackedFloat32Array = _engine.orbit_send(int(id), "delay")
 		var rp := (w["room_player"] as AudioStreamPlayer).get_stream_playback() as AudioStreamGeneratorPlayback
@@ -352,6 +386,8 @@ func _drop_wet() -> void:
 
 
 func _exit_tree() -> void:
+	# Погасить поток синтеза ДО всего остального: он трогает движок и шины.
+	_stop_fill_thread()
 	_drop_wet()
 	# 🔴 ПОТОК ПРОГРЕВА ГАСИТСЯ ПРИ ВЫХОДЕ. Он стартует вместе с музыкой, но
 	# при закрытии игры `stop()` зовут не всегда — движок тогда ругается
@@ -365,12 +401,16 @@ func _exit_tree() -> void:
 func restart_clock() -> void:
 	## Начать с начала формы. Нужно, когда несколько плееров ведут один трек
 	## разными партиями: собираются они по очереди, а идти обязаны вместе.
+	_engine_lock.lock()
 	_engine.reset_clock()
+	_engine_lock.unlock()
 
 
 func stop() -> void:
 	## Останавливает музыку и глушит голоса.
 	_playing = false
+	# Погасить поток синтеза ДО сноса шин: иначе он пишет в удаляемые узлы.
+	_stop_fill_thread()
 	_drop_wet()
 	if _engine.bank != null and _engine.bank.has_method("prime_stop"):
 		_engine.bank.prime_stop()
@@ -379,6 +419,14 @@ func stop() -> void:
 	if _engine != null:
 		_engine.shutdown()
 		_engine.reset_clock()
+
+
+func _stop_fill_thread() -> void:
+	if _fill_thread == null:
+		return
+	_fill_quit = true
+	_fill_thread.wait_to_finish()
+	_fill_thread = null
 
 
 func is_playing() -> bool:
@@ -418,7 +466,9 @@ func set_pattern(pattern: StrudelPattern) -> void:
 	## Программный вход: паттерн, собранный из GDScript, а не строкой.
 	if _engine == null:
 		_build()
+	_engine_lock.lock()
 	_engine.set_pattern(pattern)
+	_engine_lock.unlock()
 
 
 func trigger(value: Dictionary, length: float = 0.25) -> void:
@@ -434,7 +484,9 @@ func trigger(value: Dictionary, length: float = 0.25) -> void:
 	if _engine == null:
 		_build()
 	open()
+	_engine_lock.lock()
 	_engine.trigger(value, length)
+	_engine_lock.unlock()
 
 
 func open() -> void:
@@ -445,6 +497,12 @@ func open() -> void:
 	if _player != null and not _player.playing:
 		_player.play()
 	_playing = true
+	# Тот же поток синтеза, что и у [method play]: без него звуковая машина
+	# (trigger) молчала бы — синтез больше не идёт на главном потоке.
+	if _fill_thread == null:
+		_fill_quit = false
+		_fill_thread = Thread.new()
+		_fill_thread.start(_fill_loop)
 
 
 func layers() -> Dictionary:
@@ -467,7 +525,9 @@ func layer(name: String) -> StrudelPattern:
 func set_cycles_per_second(value: float) -> void:
 	## Смена темпа на ходу, без сброса такта.
 	if _engine != null:
+		_engine_lock.lock()
 		_engine.set_cps(value)
+		_engine_lock.unlock()
 
 
 func current_cycle() -> float:
@@ -509,12 +569,14 @@ func _apply_code(source: String) -> bool:
 		return false
 	_last_error = ""
 	_layers = run.get("layers", {})
+	_engine_lock.lock()
 	_engine.set_pattern(run["pattern"])
 	var cps: float = run.get("cps", 0.0)
 	if cps > 0.0:
 		# Темп из кода сильнее значения в инспекторе — так ведёт себя Strudel.
 		_cps_from_code = true
 		_engine.set_cps(cps)
+	_engine_lock.unlock()
 	return true
 
 
@@ -524,16 +586,50 @@ func _fail(message: String) -> void:
 	error_raised.emit(message)
 
 
-func _process(_delta: float) -> void:
-	if not _playing or _player == null:
-		return
-	var playback := _player.get_stream_playback()
-	if playback is AudioStreamGeneratorPlayback:
+func _fill_loop() -> void:
+	## Поток синтеза. Держит буфер генератора полным, не трогая главный поток.
+	## Всё, что связано со сценой и звуковым сервером (шины зала), заводит
+	## главный поток — здесь только счёт звука и `push_frame` (он потокобезопасен).
+	while not _fill_quit:
+		if not _playing or _player == null:
+			OS.delay_msec(5)
+			continue
+		var playback := _player.get_stream_playback()
+		if not (playback is AudioStreamGeneratorPlayback):
+			OS.delay_msec(5)
+			continue
 		var gen := playback as AudioStreamGeneratorPlayback
+		if gen.get_frames_available() <= 0:
+			OS.delay_msec(2)
+			continue
 		var buffered_before: int = _capacity() - gen.get_frames_available()
+		_engine_lock.lock()
 		var n: int = _engine.fill(gen)
 		if native_effects and n > 0:
 			_feed_wet(n, buffered_before)
+		_engine_lock.unlock()
+
+
+func _process(_delta: float) -> void:
+	if not _playing or _player == null:
+		return
+	# Главный поток заводит шины зала для орбит, которые попросил поток синтеза:
+	# `add_bus`/`add_child` можно только отсюда.
+	_wet_lock.lock()
+	var pending := _pending_wet
+	_pending_wet = {}
+	_wet_lock.unlock()
+	for id in pending:
+		if not _wet.has(id):
+			var made := _make_wet(int(id), int(pending[id]))
+			_wet_lock.lock()
+			_wet[id] = made
+			_wet_lock.unlock()
+	# Настройки зала/эха (параметры узлов Godot) применяет ТОЖЕ главный поток —
+	# трогать ресурсы звукового сервера из потока синтеза нельзя.
+	if native_effects:
+		for id in _wet:
+			_apply_wet_settings(_wet[id], _engine.orbit_settings(int(id)))
 	# О перегрузе говорим ОДИН раз: иначе лог зальёт.
 	if not _warned_clip and _engine.clipped_frames > int(_engine.mix_rate * 0.05):
 		_warned_clip = true
