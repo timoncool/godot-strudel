@@ -116,6 +116,14 @@ func _ready() -> void:
 		elif s.begins_with("--samples="):
 			_want_samples = s.substr(10)
 	music.set_bank(_load_packs())
+	# Пресеты gm_* (пиццикато, рояль, духовые webaudiofont) — из подпапки
+	# `gmfonts` рядом с сэмплами. Без них имена `gm_*` играют запасным синтезом
+	# и на плотном треке перегружают выход. Ставится после `add_child`, поэтому
+	# движок уже поднят — сеттер подхватывает пресеты сразу.
+	if _want_samples != "":
+		var gm := _want_samples.path_join("gmfonts")
+		if DirAccess.dir_exists_absolute(gm):
+			music.gm_fonts_path = gm
 
 	_names = _list_tunes()
 	_pick.add_item("— свой код —")

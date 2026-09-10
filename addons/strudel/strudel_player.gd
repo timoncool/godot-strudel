@@ -45,8 +45,14 @@ signal voices_exhausted(total_stolen: int, limit: int)
 
 ## Папка с пресетами webaudiofont (`0320_JCLive_sf2_file.js` и т. п.) — те
 ## самые, что Strudel тянет для имён `gm_*` (`@strudel/soundfonts`). Пусто —
-## имена `gm_*` играют синтезом.
-@export_dir var gm_fonts_path := ""
+## плеер сам ищет подпапку `gmfonts` рядом с сэмплами; не нашёл — `gm_*` играют
+## синтезом. Значение можно ставить и на ходу: если движок уже поднят, пресеты
+## подхватываются сразу.
+@export_dir var gm_fonts_path := "":
+	set(value):
+		gm_fonts_path = value
+		if _engine != null and value != "":
+			_load_gm_fonts(value)
 
 ## Темп в циклах в минуту. `setcpm(...)` в самом коде перебивает это значение.
 @export_range(1.0, 600.0, 0.1) var cycles_per_minute := 30.0:
@@ -174,13 +180,7 @@ func _build() -> void:
 		if DirAccess.dir_exists_absolute(guess):
 			gm_dir = guess
 	if gm_dir != "":
-		var gmf := StrudelGMFonts.new()
-		var found := gmf.load_folder(gm_dir)
-		if found > 0:
-			_engine.gm_fonts = gmf
-			print("Strudel: пресеты gm_* — %d на диске" % found)
-		else:
-			push_warning("Strudel: в «%s» нет пресетов gm_*" % gm_dir)
+		_load_gm_fonts(gm_dir)
 
 	if soundfont_path != "":
 		var sf := StrudelSoundFont.new()
@@ -202,6 +202,21 @@ func _build() -> void:
 	add_child(_player)
 	_engine.setup(stream.mix_rate)
 	_engine.set_cps(cycles_per_minute / 60.0)
+
+
+## Загрузить пресеты gm_* из папки в живой движок. Зовётся из [method _build]
+## (авто-подхват) и из сеттера [member gm_fonts_path] (можно ставить на ходу).
+func _load_gm_fonts(dir: String) -> void:
+	if _engine == null or dir == "":
+		return
+	var globalized := ProjectSettings.globalize_path(dir)
+	var gmf := StrudelGMFonts.new()
+	var found := gmf.load_folder(globalized)
+	if found > 0:
+		_engine.gm_fonts = gmf
+		print("Strudel: пресеты gm_* — %d на диске" % found)
+	else:
+		push_warning("Strudel: в «%s» нет пресетов gm_*" % globalized)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
