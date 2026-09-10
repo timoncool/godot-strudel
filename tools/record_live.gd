@@ -17,6 +17,7 @@ var _seconds := 8.0
 var _code := ""
 var _samples := ""
 var _native := true
+var _gmfonts := ""
 var _rec: AudioEffectRecord = null
 var _music: StrudelPlayer = null
 var _t := 0.0
@@ -46,6 +47,8 @@ func _init() -> void:
 			_samples = s.substr(10)
 		elif s.begins_with("--native="):
 			_native = s.substr(9) != "0"
+		elif s.begins_with("--gmfonts="):
+			_gmfonts = s.substr(10)
 		elif s.begins_with("--watch="):
 			_watch = s.substr(8) != "0"
 		elif s.begins_with("--burn="):
@@ -103,6 +106,8 @@ func _process(delta: float) -> bool:
 		_music.native_effects = _native
 		if _samples != "":
 			_music.samples_path = _samples
+		if _gmfonts != "":
+			_music.gm_fonts_path = _gmfonts
 		root.add_child(_music)
 		if not _music.play(_code):
 			printerr("[живая запись] код не принят: ", _music.last_error())

@@ -163,14 +163,24 @@ func _build() -> void:
 			push_warning("Strudel: в папке \"%s\" не нашлось сэмплов — играю синтезом." % samples_path)
 	_engine.bank = _bank
 
-	if gm_fonts_path != "":
+	# Путь к пресетам gm_* не задан — ищем подпапку `gmfonts` рядом с сэмплами.
+	# Так голоса `gm_*` (пиццикато, рояль, духовые из webaudiofont) звучат сами
+	# собой, как в Булке. 🔴 БЕЗ ЭТОГО gm_* ИГРАЛ ЗАПАСНЫМ СИНТЕЗОМ — тянущимся
+	# треугольником вместо короткого сэмпла, и на треке из пиццикато голоса
+	# копились в перегруз, которого в оригинале нет.
+	var gm_dir := gm_fonts_path
+	if gm_dir == "" and samples_path != "":
+		var guess := ProjectSettings.globalize_path(samples_path).path_join("gmfonts")
+		if DirAccess.dir_exists_absolute(guess):
+			gm_dir = guess
+	if gm_dir != "":
 		var gmf := StrudelGMFonts.new()
-		var found := gmf.load_folder(gm_fonts_path)
+		var found := gmf.load_folder(gm_dir)
 		if found > 0:
 			_engine.gm_fonts = gmf
 			print("Strudel: пресеты gm_* — %d на диске" % found)
 		else:
-			push_warning("Strudel: в «%s» нет пресетов gm_*" % gm_fonts_path)
+			push_warning("Strudel: в «%s» нет пресетов gm_*" % gm_dir)
 
 	if soundfont_path != "":
 		var sf := StrudelSoundFont.new()

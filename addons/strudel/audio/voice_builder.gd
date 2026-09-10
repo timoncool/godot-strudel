@@ -13,6 +13,9 @@ const DEFAULT_GAIN := 0.8
 const DEFAULT_SOUND := "triangle"
 ## Приглушение синтеза перед огибающей (`synth.mjs:54`).
 const SYNTH_ATTENUATION := 0.3
+## Пиковое усиление голоса `gm_*` — как в `@strudel/soundfonts` (огибающая с
+## максимумом 0.3). Без него пресеты webaudiofont звучат в 3.3× громче.
+const GM_PEAK := 0.3
 
 ## Сколько обертонов берётся у волновой таблицы.
 const WT_PARTIALS := 128
@@ -185,6 +188,14 @@ static func configure(voice: StrudelVoice, value: Dictionary, length: float,
 			voice.sample_loop_begin = float(picked.get("loop_begin", 0.0))
 			voice.sample_loop_end = float(picked.get("loop_end", 0.0))
 			voice.speed = voice.speed * float(picked.get("speed", 1.0))
+			# 🔴 ПИК gm_-ГОЛОСА — 0.3, А НЕ 1.0. В Strudel сэмпл пресета идёт через
+			# огибающую с максимумом 0.3 (`@strudel/soundfonts/fontloader`, вызов
+			# `getParamADSR(node.gain, …, 0, 0.3, …)`), и только потом множится на
+			# `gain`/`velocity` ноты. Без этого множителя каждый gm_-голос звучал в
+			# 3.3× громче оригинала — трек на пиццикато (весь джингл) перегружал
+			# выход, тогда как в Булке те же ноты чисты. На событийные гейты не
+			# влияет: это усиление синтеза, а не поле события.
+			voice.gain *= GM_PEAK
 			return
 
 	# Саундфонт: адресация "sf:<банк>:<программа>", как в Strudel.
